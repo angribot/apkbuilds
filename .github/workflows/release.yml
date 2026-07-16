@@ -193,7 +193,7 @@ jobs:
                 fi
               done
               test "$ready" = true
-              apk upgrade "gnupg=$PACKAGE_TAG"
+              apk add --upgrade "gnupg=$PACKAGE_TAG"
               apk info -e "gnupg=$PACKAGE_TAG"
               scripts/test-package.sh "${PACKAGE_TAG%-r*}"
             '
