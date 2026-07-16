@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release
+  group: release-${{ github.event.workflow_run.head_branch || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
