@@ -10,14 +10,15 @@ permissions:
 
 concurrency:
   group: publish
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main'
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_sha == github.sha
     strategy:
       fail-fast: false
       matrix:
@@ -92,6 +93,7 @@ jobs:
           mv public/repository-x86_64 public/edge/x86_64
           mv public/repository-aarch64 public/edge/aarch64
           cp keys/apkbuilds.rsa.pub public/
+          printf '%s\n' '${{ github.event.workflow_run.head_sha }}' > public/commit
           test -s public/edge/x86_64/APKINDEX.tar.gz
           test -s public/edge/aarch64/APKINDEX.tar.gz
           test -n "$(find public/edge/x86_64 -name 'gnupg-*.apk' -print -quit)"
@@ -125,6 +127,8 @@ jobs:
           package_version="$version-r$revision"
           docker run --rm \
             -e PACKAGE_VERSION="$package_version" \
+            -e PUBLISHED_SHA="${{ github.event.workflow_run.head_sha }}" \
+            -e RUN_ID="${{ github.run_id }}" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             alpine:edge sh -euxc '
@@ -134,13 +138,18 @@ jobs:
               ready=false
               for delay in 0 5 10 20 40 60; do
                 sleep "$delay"
-                if apk update && apk policy gnupg | grep -F "$PACKAGE_VERSION"; then
+                if [ "$(wget -qO- "https://angribot.github.io/apkbuilds/commit?run=$RUN_ID")" = "$PUBLISHED_SHA" ]; then
                   ready=true
                   break
                 fi
               done
               test "$ready" = true
-              apk add --upgrade "gnupg=$PACKAGE_VERSION"
+              apk update
+              repository="https://angribot.github.io/apkbuilds/edge/$(apk --print-arch)"
+              wget -q "$repository/gpg-$PACKAGE_VERSION.apk?run=$RUN_ID" -O /tmp/gpg.apk
+              wget -q "$repository/gnupg-$PACKAGE_VERSION.apk?run=$RUN_ID" -O /tmp/gnupg.apk
+              apk add --upgrade /tmp/gpg.apk /tmp/gnupg.apk
+              apk info -e "gpg=$PACKAGE_VERSION"
               apk info -e "gnupg=$PACKAGE_VERSION"
               scripts/test-package.sh "${PACKAGE_VERSION%-r*}"
             '

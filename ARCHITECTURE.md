@@ -19,7 +19,7 @@
 - [`.github/workflows/update.yml`](.github/workflows/update.yml) — daily update
   PR creation and automatic merge request.
 - [`.github/workflows/publish.yml`](.github/workflows/publish.yml) — signed Pages
-  publication after successful main push CI and remote installation tests.
+  publication after successful current-main CI and remote installation tests.
 - [`tests/test_update.py`](tests/test_update.py) — standard-library unit tests.
 
 ## Key Types and Relationships
@@ -39,13 +39,13 @@ split functions in [`packages/gnupg/APKBUILD`](packages/gnupg/APKBUILD).
 4. `ci.yml` tests every change. PR and manual update runs build independently on
    native x86_64 and ARM64 runners; main pushes leave the package build to the
    publishing workflow to avoid duplicate work.
-5. Successful CI completion for a push to main starts `publish.yml` at the
-   tested head SHA. It builds and signs both architecture repositories with the
-   protected persistent key and deploys them to GitHub Pages under
-   `edge/x86_64` and `edge/aarch64`.
-6. Native post-deployment jobs add the Pages repository, install the exact
-   published version after bounded propagation retries, and repeat the package
-   smoke test.
+5. Successful CI completion for a push to main starts `publish.yml` only while
+   the tested head remains the current main SHA. Publication runs serialize,
+   build and sign both architecture repositories with the protected persistent
+   key, and deploy them to GitHub Pages under `edge/x86_64` and `edge/aarch64`.
+6. The deployment includes its tested commit SHA. Native post-deployment jobs
+   wait for that marker, download the exact `gpg` and `gnupg` APKs from the
+   architecture repository, install them, and repeat the package smoke test.
 7. Failed detection, verification, build, publication, or smoke tests stop their
    workflow.
 
@@ -58,7 +58,7 @@ sources, applies Alpine patches, compiles GnuPG, splits it into APK subpackages,
 and creates a signed package repository. CI installs the `gnupg` metapackage
 from a temporary repository. Publishing builds use the persistent key and
 assemble `edge/x86_64/` and `edge/aarch64/` repositories containing signed
-`APKINDEX.tar.gz` files for Pages.
+`APKINDEX.tar.gz` files plus a root commit marker for Pages.
 
 ## Design Decisions
 
@@ -72,8 +72,11 @@ assemble `edge/x86_64/` and `edge/aarch64/` repositories containing signed
 - Use only Python and shell standard tooling; no project dependencies are added.
 - Keep the private abuild key only in the protected `release` Environment and
   publish only its public key.
-- Publish automatically only after successful CI for pushes to main, checking
-  out the tested head SHA; there is no manual publishing entry point.
+- Publish automatically only after successful CI for the current main SHA;
+  serialize deployments so post-deployment verification is never cancelled.
+- Verify Pages propagation with the deployed commit marker, then install the
+  exact Pages-hosted `gpg` and `gnupg` APK files so a same-version Alpine package
+  cannot satisfy the smoke test.
 
 ## External Dependencies
 
@@ -92,6 +95,7 @@ assemble `edge/x86_64/` and `edge/aarch64/` repositories containing signed
 - Unit tests: `python3 -m unittest discover -s tests`.
 - CI/manual package build: `ci.yml`; locally, run `abuild -r` from
   [`packages/gnupg/`](packages/gnupg/) in an Alpine edge `alpine-sdk` setup.
-- Automatic Pages publication: `publish.yml`, after successful push CI on main.
+- Automatic Pages publication: `publish.yml`, after successful CI for the
+  current main SHA.
 - Public repository: `https://angribot.github.io/apkbuilds/edge`; `apk` appends
   the current architecture when fetching its index.
