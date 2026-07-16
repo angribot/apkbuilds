@@ -54,9 +54,10 @@ split functions in [`packages/gnupg/APKBUILD`](packages/gnupg/APKBUILD).
 The official HTML index yields a semantic version. The corresponding tarball
 and signature yield an authenticated source and SHA-512 digest. These values
 replace `pkgver` and the source checksum in the APKBUILD. `abuild -r` downloads
-sources, applies Alpine patches, compiles GnuPG, splits it into APK subpackages,
-and creates a signed package repository. CI installs the `gnupg` metapackage
-from a temporary repository. Publishing builds use the persistent key and
+sources, applies Alpine patches, compiles GnuPG, runs the full upstream test
+suite, splits it into APK subpackages, and creates a signed package repository.
+CI installs the exact `gnupg=$pkgver-r$pkgrel` metapackage from the temporary
+repository. Publishing builds use the persistent key and
 assemble `edge/x86_64/` and `edge/aarch64/` repositories containing signed
 `APKINDEX.tar.gz` files plus a root commit marker for Pages.
 
