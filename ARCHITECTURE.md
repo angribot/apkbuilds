@@ -36,9 +36,9 @@ split functions in [`packages/gnupg/APKBUILD`](packages/gnupg/APKBUILD).
 2. `update.py` compares the official release index with the APKBUILD version.
 3. A new source and detached signature are downloaded and verified before any
    file changes. A verified update produces a PR and requests auto-merge.
-4. `ci.yml` tests every change. PR and manual update runs build independently on
-   native x86_64 and ARM64 runners; main pushes leave the package build to the
-   publishing workflow to avoid duplicate work.
+4. `ci.yml` tests non-documentation changes. PR and manual update runs build
+   independently on native x86_64 and ARM64 runners; main pushes leave the
+   package build to the publishing workflow to avoid duplicate work.
 5. Successful CI completion for a push to main starts `publish.yml` only while
    the tested head remains the current main SHA. Publication runs serialize,
    build and sign both architecture repositories with the protected persistent
