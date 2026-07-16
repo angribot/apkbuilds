@@ -12,8 +12,7 @@ Run as root:
 ```sh
 wget -q https://angribot.github.io/apkbuilds/apkbuilds.rsa.pub \
   -O /etc/apk/keys/apkbuilds.rsa.pub
-echo "https://angribot.github.io/apkbuilds/$(apk --print-arch)" \
-  >> /etc/apk/repositories
+echo "https://angribot.github.io/apkbuilds" >> /etc/apk/repositories
 apk update
 apk add gnupg
 ```

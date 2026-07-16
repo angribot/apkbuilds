@@ -94,4 +94,5 @@ Release assets.
   [`packages/gnupg/`](packages/gnupg/) in an Alpine edge `alpine-sdk` setup.
 - Automatic/manual release: `release.yml`; manual replacement of an existing
   release requires `force=true` on main.
-- Public repository: `https://angribot.github.io/apkbuilds/$arch`.
+- Public repository: `https://angribot.github.io/apkbuilds`; `apk` appends the
+  current architecture when fetching its index.

@@ -176,7 +176,7 @@ jobs:
             alpine:edge sh -euxc '
               apk add gnupg
               wget -q https://angribot.github.io/apkbuilds/apkbuilds.rsa.pub -O /etc/apk/keys/apkbuilds.rsa.pub
-              echo "https://angribot.github.io/apkbuilds/$ARCH" >> /etc/apk/repositories
+              echo "https://angribot.github.io/apkbuilds" >> /etc/apk/repositories
               ready=false
               for delay in 0 5 10 20 40 60; do
                 sleep "$delay"
