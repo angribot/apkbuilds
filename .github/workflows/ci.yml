@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  test-updater:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s tests
+      - run: python3 scripts/update.py --check
+
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: alpine:edge
+    steps:
+      - name: Check out repository
+        run: |
+          apk add git
+          git init "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git fetch --depth=1 origin "$GITHUB_REF"
+          git checkout --detach FETCH_HEAD
+      - name: Prepare builder
+        run: |
+          apk add alpine-sdk
+          adduser -D builder
+          addgroup builder abuild
+          echo 'permit nopass builder as root' > /etc/doas.d/builder.conf
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          su builder -c 'abuild-keygen -a -n'
+          cp /home/builder/.abuild/*.rsa.pub /etc/apk/keys/
+      - name: Build
+        run: su builder -c "cd '$GITHUB_WORKSPACE/packages/gnupg' && abuild -r"
+      - name: Install and test
+        run: |
+          repository=/home/builder/packages/packages/gnupg/${{ matrix.arch }}
+          apk add --repository "$repository" "gnupg=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)-r0"
+          scripts/test-package.sh "$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)"
+
+  merge-update:
+    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref_name, 'update/gnupg-')
+    needs: [test-updater, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - run: gh pr merge --repo "$GITHUB_REPOSITORY" --squash --delete-branch "$GITHUB_REF_NAME"

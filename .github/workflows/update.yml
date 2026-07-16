@@ -1,0 +1,38 @@
+name: Update GnuPG
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check official stable release
+        id: update
+        run: |
+          version=$(python3 scripts/update.py)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          git diff --quiet && echo 'changed=false' >> "$GITHUB_OUTPUT" || echo 'changed=true' >> "$GITHUB_OUTPUT"
+      - name: Create update pull request
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.update.outputs.version }}
+        run: |
+          branch="update/gnupg-$VERSION"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git switch -c "$branch"
+          git add packages/gnupg/APKBUILD
+          git commit -m "gnupg: upgrade to $VERSION"
+          git push origin "$branch"
+          gh pr create --base main --head "$branch" --title "gnupg: upgrade to $VERSION" --body "Verified against a pinned official GnuPG release-signing fingerprint."
+          gh workflow run ci.yml --ref "$branch"
