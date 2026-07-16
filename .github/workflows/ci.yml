@@ -10,6 +10,10 @@ permissions:
   contents: read
   pull-requests: write
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   test-updater:
     runs-on: ubuntu-latest
@@ -19,6 +23,7 @@ jobs:
       - run: python3 scripts/update.py --check
 
   build:
+    if: github.event_name != 'push' || github.ref_name != 'main'
     strategy:
       fail-fast: false
       matrix:
