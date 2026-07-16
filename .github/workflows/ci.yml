@@ -44,6 +44,7 @@ jobs:
           apk add alpine-sdk
           adduser -D builder
           addgroup builder abuild
+          mkdir -p /etc/doas.d
           echo 'permit nopass builder as root' > /etc/doas.d/builder.conf
           chown -R builder:builder "$GITHUB_WORKSPACE"
           su builder -c 'abuild-keygen -a -n'
