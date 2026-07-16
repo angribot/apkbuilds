@@ -93,6 +93,6 @@ Release assets.
 - CI/manual package build: `ci.yml`; locally, run `abuild -r` from
   [`packages/gnupg/`](packages/gnupg/) in an Alpine edge `alpine-sdk` setup.
 - Automatic/manual release: `release.yml`; manual replacement of an existing
-  release requires `force=true` on main.
+  release requires `force=true`, while `verify=true` tests Pages without a rebuild.
 - Public repository: `https://angribot.github.io/apkbuilds`; `apk` appends the
   current architecture when fetching its index.

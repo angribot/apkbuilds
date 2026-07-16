@@ -10,6 +10,10 @@ on:
         description: Rebuild and replace an existing release
         type: boolean
         default: false
+      verify:
+        description: Test the existing Pages repository without rebuilding
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -149,6 +153,9 @@ jobs:
         uses: actions/deploy-pages@v4
 
   test-pages:
+    if: >-
+      always() && needs.prepare.result == 'success' &&
+      (needs.publish.result == 'success' || inputs.verify == true)
     needs: [prepare, publish]
     strategy:
       fail-fast: false
