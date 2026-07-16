@@ -1,8 +1,9 @@
 name: Publish
 
 on:
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
 
 permissions:
   contents: read
@@ -13,6 +14,10 @@ concurrency:
 
 jobs:
   build:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
     strategy:
       fail-fast: false
       matrix:
@@ -27,15 +32,17 @@ jobs:
       ABUILD_PRIVATE_KEY: ${{ secrets.ABUILD_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
       - name: Build, install, and test
         run: |
           version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
           revision=$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)
-          package_tag="$version-r$revision"
+          package_version="$version-r$revision"
           mkdir -p "$RUNNER_TEMP/repository"
           docker run --rm \
             -e ABUILD_PRIVATE_KEY \
-            -e PACKAGE_TAG="$package_tag" \
+            -e PACKAGE_VERSION="$package_version" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -v "$RUNNER_TEMP/repository:/repository" \
             -w /workspace \
@@ -52,8 +59,8 @@ jobs:
               chmod 600 /home/builder/.config/abuild/apkbuilds.rsa
               chown -R builder:builder /home/builder/.config /repository /workspace
               su builder -c "cd /workspace/packages/gnupg && REPODEST=/repository abuild -r"
-              apk add --repository /repository/packages "gnupg=$PACKAGE_TAG"
-              scripts/test-package.sh "${PACKAGE_TAG%-r*}"
+              apk add --repository /repository/packages "gnupg=$PACKAGE_VERSION"
+              scripts/test-package.sh "${PACKAGE_VERSION%-r*}"
             '
       - uses: actions/upload-artifact@v4
         with:
@@ -73,6 +80,8 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
       - uses: actions/download-artifact@v4
         with:
           pattern: repository-*
@@ -107,13 +116,15 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
       - name: Test exact-version installation from Pages
         run: |
           version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
           revision=$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)
-          package_tag="$version-r$revision"
+          package_version="$version-r$revision"
           docker run --rm \
-            -e PACKAGE_TAG="$package_tag" \
+            -e PACKAGE_VERSION="$package_version" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             alpine:edge sh -euxc '
@@ -123,13 +134,13 @@ jobs:
               ready=false
               for delay in 0 5 10 20 40 60; do
                 sleep "$delay"
-                if apk update && apk policy gnupg | grep -F "$PACKAGE_TAG"; then
+                if apk update && apk policy gnupg | grep -F "$PACKAGE_VERSION"; then
                   ready=true
                   break
                 fi
               done
               test "$ready" = true
-              apk add --upgrade "gnupg=$PACKAGE_TAG"
-              apk info -e "gnupg=$PACKAGE_TAG"
-              scripts/test-package.sh "${PACKAGE_TAG%-r*}"
+              apk add --upgrade "gnupg=$PACKAGE_VERSION"
+              apk info -e "gnupg=$PACKAGE_VERSION"
+              scripts/test-package.sh "${PACKAGE_VERSION%-r*}"
             '
