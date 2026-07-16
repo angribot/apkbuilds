@@ -108,7 +108,7 @@ build() {
 }
 
 check() {
-	make check
+	make check TESTFLAGS=--parallel
 }
 
 package() {
