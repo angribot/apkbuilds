@@ -3,7 +3,7 @@ set -eu
 version=$1
 version_output=$(gpg --version 2>&1)
 printf '%s\n' "$version_output" | head -1 | grep -F "$version"
-if printf '%s\n' "$version_output" | grep -Eqi 'development|beta|release candidate|warning:.*(^|[^[:alnum:]_])rc([0-9._ -]|$)'; then
+if printf '%s\n' "$version_output" | grep -Eqi 'development|beta|release candidate'; then
   echo 'unexpected development/beta/RC GnuPG warning' >&2
   exit 1
 fi

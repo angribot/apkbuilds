@@ -4,7 +4,7 @@
 pkgname=gnupg
 pkgver=2.5.21
 _ver=${pkgver/_beta/-beta}
-pkgrel=0
+pkgrel=1
 pkgdesc="GNU Privacy Guard 2 - meta package for full GnuPG suite"
 url="https://www.gnupg.org/"
 arch="all"
@@ -85,6 +85,7 @@ prepare() {
 
 	# tries to mkdir -p setup.scm/tests but this is a file?
 	rm tests/gpgme/setup.scm
+	sed -i '/^      beta=yes$/s/yes/no/; /^      tmp="-unknown"$/s/-unknown//' autogen.sh
 
 	autoreconf -vif
 }
