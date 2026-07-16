@@ -53,7 +53,7 @@ jobs:
         run: su builder -c "cd '$GITHUB_WORKSPACE/packages/gnupg' && abuild -r"
       - name: Install and test
         run: |
-          repository=/home/builder/packages/packages/gnupg
+          repository=/home/builder/.local/share/abuild/packages
           apk add --repository "$repository" "gnupg=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)-r0"
           scripts/test-package.sh "$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)"
 
