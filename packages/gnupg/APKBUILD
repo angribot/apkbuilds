@@ -148,7 +148,6 @@ dirmngr() {
 
 	amove usr/bin/dirmngr*
 	amove usr/libexec/dirmngr_ldap
-	amove usr/share/gnupg/sks-keyservers.netCA.pem
 }
 
 gpg() {
