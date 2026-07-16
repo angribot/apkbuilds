@@ -59,8 +59,10 @@ jobs:
       - name: Install and test
         run: |
           repository=/home/builder/.local/share/abuild/packages
-          apk add --repository "$repository" "gnupg=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)-r0"
-          scripts/test-package.sh "$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)"
+          version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
+          revision=$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)
+          apk add --repository "$repository" "gnupg=$version-r$revision"
+          scripts/test-package.sh "$version"
 
   merge-update:
     if: github.event_name == 'workflow_dispatch' && startsWith(github.ref_name, 'update/gnupg-')
