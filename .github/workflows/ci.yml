@@ -33,6 +33,7 @@ jobs:
       - name: Check out repository
         run: |
           apk add git
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git init "$GITHUB_WORKSPACE"
           cd "$GITHUB_WORKSPACE"
           git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
