@@ -9,10 +9,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release
+  cancel-in-progress: true
+
 jobs:
   prepare:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && github.ref_name == 'main') ||
       (github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
@@ -31,7 +35,7 @@ jobs:
           version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
           revision=$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)
           tag="$version-r$revision"
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || ! gh release view "$tag" >/dev/null 2>&1; then
+          if ! gh release view "$tag" >/dev/null 2>&1; then
             echo publish=true >> "$GITHUB_OUTPUT"
           else
             echo publish=false >> "$GITHUB_OUTPUT"
@@ -51,43 +55,44 @@ jobs:
           - arch: aarch64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    container: alpine:edge
     environment: release
     env:
       ABUILD_PRIVATE_KEY: ${{ secrets.ABUILD_PRIVATE_KEY }}
     steps:
-      - name: Check out repository
-        run: |
-          apk add git
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git init "$GITHUB_WORKSPACE"
-          cd "$GITHUB_WORKSPACE"
-          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
-          git fetch --depth=1 origin "${{ needs.prepare.outputs.ref }}"
-          git checkout --detach FETCH_HEAD
-      - name: Prepare builder and signing key
-        run: |
-          apk add alpine-sdk
-          adduser -D builder
-          addgroup builder abuild
-          mkdir -p /etc/doas.d /home/builder/.config/abuild
-          echo 'permit nopass builder as root' > /etc/doas.d/builder.conf
-          printf '%s\n' "$ABUILD_PRIVATE_KEY" > /home/builder/.config/abuild/apkbuilds.rsa
-          cp keys/apkbuilds.rsa.pub /home/builder/.config/abuild/apkbuilds.rsa.pub
-          cp keys/apkbuilds.rsa.pub /etc/apk/keys/
-          echo 'PACKAGER_PRIVKEY="/home/builder/.config/abuild/apkbuilds.rsa"' > /home/builder/.config/abuild/abuild.conf
-          chmod 600 /home/builder/.config/abuild/apkbuilds.rsa
-          chown -R builder:builder /home/builder/.config "$GITHUB_WORKSPACE"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
       - name: Build, install, and test
+        env:
+          PACKAGE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          su builder -c "cd '$GITHUB_WORKSPACE/packages/gnupg' && abuild -r"
-          repository=/home/builder/.local/share/abuild/packages
-          apk add --repository "$repository" "gnupg=${{ needs.prepare.outputs.tag }}"
-          scripts/test-package.sh "$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)"
+          mkdir -p "$RUNNER_TEMP/repository"
+          docker run --rm \
+            -e ABUILD_PRIVATE_KEY \
+            -e PACKAGE_TAG \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -v "$RUNNER_TEMP/repository:/repository" \
+            -w /workspace \
+            alpine:edge sh -euxc '
+              apk add alpine-sdk
+              adduser -D builder
+              addgroup builder abuild
+              mkdir -p /etc/doas.d /home/builder/.config/abuild
+              echo "permit nopass builder as root" > /etc/doas.d/builder.conf
+              printf "%s\n" "$ABUILD_PRIVATE_KEY" > /home/builder/.config/abuild/apkbuilds.rsa
+              cp keys/apkbuilds.rsa.pub /home/builder/.config/abuild/apkbuilds.rsa.pub
+              cp keys/apkbuilds.rsa.pub /etc/apk/keys/
+              echo "PACKAGER_PRIVKEY=/home/builder/.config/abuild/apkbuilds.rsa" > /home/builder/.config/abuild/abuild.conf
+              chmod 600 /home/builder/.config/abuild/apkbuilds.rsa
+              chown -R builder:builder /home/builder/.config /repository /workspace
+              su builder -c "cd /workspace/packages/gnupg && REPODEST=/repository abuild -r"
+              apk add --repository /repository/packages "gnupg=$PACKAGE_TAG"
+              scripts/test-package.sh "$(sed -n s/^pkgver=//p packages/gnupg/APKBUILD)"
+            '
       - uses: actions/upload-artifact@v4
         with:
           name: repository-${{ matrix.arch }}
-          path: /home/builder/.local/share/abuild/packages/${{ matrix.arch }}/
+          path: ${{ runner.temp }}/repository/packages/${{ matrix.arch }}/
           if-no-files-found: error
 
   publish:
