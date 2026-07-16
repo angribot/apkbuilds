@@ -18,8 +18,8 @@
   native `x86_64`/`aarch64` Alpine edge builds.
 - [`.github/workflows/update.yml`](.github/workflows/update.yml) — daily update
   PR creation and automatic merge request.
-- [`.github/workflows/release.yml`](.github/workflows/release.yml) — persistent
-  signing, GitHub Release publication, Pages deployment, and remote tests.
+- [`.github/workflows/publish.yml`](.github/workflows/publish.yml) — signed Pages
+  publication from main and remote installation tests.
 - [`tests/test_update.py`](tests/test_update.py) — standard-library unit tests.
 
 ## Key Types and Relationships
@@ -38,12 +38,13 @@ split functions in [`packages/gnupg/APKBUILD`](packages/gnupg/APKBUILD).
    file changes. A verified update produces a PR and requests auto-merge.
 4. `ci.yml` tests every change. PR and manual update runs build independently on
    native x86_64 and ARM64 runners; main pushes leave the package build to the
-   release workflow to avoid duplicate work.
-5. A successful push CI on main starts `release.yml`. A new version, or an
-   explicit forced run, builds and signs both repositories using the protected
-   persistent key, publishes Release assets, and deploys GitHub Pages.
-6. Native post-deployment jobs install Alpine's GnuPG, add the Pages repository,
-   upgrade to the exact release, and repeat the package smoke test.
+   publishing workflow to avoid duplicate work.
+5. Every push to main starts `publish.yml`, which builds and signs both
+   architecture repositories with the protected persistent key and deploys them
+   to GitHub Pages under `edge/x86_64` and `edge/aarch64`.
+6. Native post-deployment jobs add the Pages repository, install the exact
+   published version after bounded propagation retries, and repeat the package
+   smoke test.
 7. Failed detection, verification, build, publication, or smoke tests stop their
    workflow.
 
@@ -54,10 +55,9 @@ and signature yield an authenticated source and SHA-512 digest. These values
 replace `pkgver` and the source checksum in the APKBUILD. `abuild -r` downloads
 sources, applies Alpine patches, compiles GnuPG, splits it into APK subpackages,
 and creates a signed package repository. CI installs the `gnupg` metapackage
-from a temporary repository. Release builds use the persistent key and assemble
-`x86_64/` and `aarch64/` repositories containing signed `APKINDEX.tar.gz` files
-for Pages; equivalent repository tarballs and the public key become GitHub
-Release assets.
+from a temporary repository. Publishing builds use the persistent key and
+assemble `edge/x86_64/` and `edge/aarch64/` repositories containing signed
+`APKINDEX.tar.gz` files for Pages.
 
 ## Design Decisions
 
@@ -71,9 +71,8 @@ Release assets.
 - Use only Python and shell standard tooling; no project dependencies are added.
 - Keep the private abuild key only in the protected `release` Environment and
   publish only its public key.
-- Restrict automatic releases to successful push CI on main. Release concurrency
-  is isolated by source branch, and rebuilding an existing tag requires an
-  explicit manual `force` input.
+- Publish automatically only from pushes to main; there is no manual publishing
+  entry point that can select another ref.
 
 ## External Dependencies
 
@@ -82,8 +81,8 @@ Release assets.
 - GnuPG's official HTTPS server provides the release index, source, signature,
   and public release keys.
 - GnuPG verifies source signatures; `abuild` builds and signs APKs.
-- GitHub Actions supplies scheduling, native runners, checks, PRs, merging,
-  protected secrets, Releases, and Pages deployment.
+- GitHub Actions supplies scheduling, native runners, checks, PRs, merging, and
+  Pages deployment.
 
 ## Entry Points and Execution Modes
 
@@ -92,7 +91,6 @@ Release assets.
 - Unit tests: `python3 -m unittest discover -s tests`.
 - CI/manual package build: `ci.yml`; locally, run `abuild -r` from
   [`packages/gnupg/`](packages/gnupg/) in an Alpine edge `alpine-sdk` setup.
-- Automatic/manual release: `release.yml`; manual replacement of an existing
-  release requires `force=true`, while `verify=true` tests Pages without a rebuild.
-- Public repository: `https://angribot.github.io/apkbuilds`; `apk` appends the
-  current architecture when fetching its index.
+- Automatic Pages publication: `publish.yml`, only on pushes to main.
+- Public repository: `https://angribot.github.io/apkbuilds/edge`; `apk` appends
+  the current architecture when fetching its index.

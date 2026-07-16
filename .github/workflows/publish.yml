@@ -1,61 +1,18 @@
-name: Release
+name: Publish
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-  workflow_dispatch:
-    inputs:
-      force:
-        description: Rebuild and replace an existing release
-        type: boolean
-        default: false
-      verify:
-        description: Test the existing Pages repository without rebuilding
-        type: boolean
-        default: false
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.event.workflow_run.head_branch || github.ref_name }}
+  group: publish
   cancel-in-progress: true
 
 jobs:
-  prepare:
-    if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref_name == 'main') ||
-      (github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main')
-    runs-on: ubuntu-latest
-    outputs:
-      publish: ${{ steps.release.outputs.publish }}
-      ref: ${{ steps.release.outputs.ref }}
-      tag: ${{ steps.release.outputs.tag }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-      - id: release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
-          revision=$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)
-          tag="$version-r$revision"
-          if [ "${{ inputs.force || false }}" = true ] || ! gh release view "$tag" >/dev/null 2>&1; then
-            echo publish=true >> "$GITHUB_OUTPUT"
-          else
-            echo publish=false >> "$GITHUB_OUTPUT"
-          fi
-          echo "ref=${{ github.event.workflow_run.head_sha || github.sha }}" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
   build:
-    if: needs.prepare.outputs.publish == 'true'
-    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -70,16 +27,15 @@ jobs:
       ABUILD_PRIVATE_KEY: ${{ secrets.ABUILD_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare.outputs.ref }}
       - name: Build, install, and test
-        env:
-          PACKAGE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
+          version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
+          revision=$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)
+          package_tag="$version-r$revision"
           mkdir -p "$RUNNER_TEMP/repository"
           docker run --rm \
             -e ABUILD_PRIVATE_KEY \
-            -e PACKAGE_TAG \
+            -e PACKAGE_TAG="$package_tag" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -v "$RUNNER_TEMP/repository:/repository" \
             -w /workspace \
@@ -97,7 +53,7 @@ jobs:
               chown -R builder:builder /home/builder/.config /repository /workspace
               su builder -c "cd /workspace/packages/gnupg && REPODEST=/repository abuild -r"
               apk add --repository /repository/packages "gnupg=$PACKAGE_TAG"
-              scripts/test-package.sh "$(sed -n s/^pkgver=//p packages/gnupg/APKBUILD)"
+              scripts/test-package.sh "${PACKAGE_TAG%-r*}"
             '
       - uses: actions/upload-artifact@v4
         with:
@@ -106,11 +62,10 @@ jobs:
           if-no-files-found: error
 
   publish:
-    if: needs.prepare.outputs.publish == 'true'
-    needs: [prepare, build]
+    needs: build
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       pages: write
       id-token: write
     environment:
@@ -118,45 +73,29 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare.outputs.ref }}
       - uses: actions/download-artifact@v4
         with:
           pattern: repository-*
           path: public
       - name: Assemble and verify repository
         run: |
-          mv public/repository-x86_64 public/x86_64
-          mv public/repository-aarch64 public/aarch64
+          mkdir public/edge
+          mv public/repository-x86_64 public/edge/x86_64
+          mv public/repository-aarch64 public/edge/aarch64
           cp keys/apkbuilds.rsa.pub public/
-          test -s public/x86_64/APKINDEX.tar.gz
-          test -s public/aarch64/APKINDEX.tar.gz
-          test -n "$(find public/x86_64 -name 'gnupg-*.apk' -print -quit)"
-          test -n "$(find public/aarch64 -name 'gnupg-*.apk' -print -quit)"
+          test -s public/edge/x86_64/APKINDEX.tar.gz
+          test -s public/edge/aarch64/APKINDEX.tar.gz
+          test -n "$(find public/edge/x86_64 -name 'gnupg-*.apk' -print -quit)"
+          test -n "$(find public/edge/aarch64 -name 'gnupg-*.apk' -print -quit)"
       - uses: actions/upload-pages-artifact@v4
         with:
           path: public
-      - name: Publish GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag=${{ needs.prepare.outputs.tag }}
-          tar -C public -czf repository-x86_64.tar.gz x86_64
-          tar -C public -czf repository-aarch64.tar.gz aarch64
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" repository-*.tar.gz public/apkbuilds.rsa.pub --clobber
-          else
-            gh release create "$tag" repository-*.tar.gz public/apkbuilds.rsa.pub --title "GnuPG $tag" --notes "Signed Alpine edge packages for x86_64 and aarch64."
-          fi
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
 
   test-pages:
-    if: >-
-      always() && needs.prepare.result == 'success' &&
-      (needs.publish.result == 'success' || inputs.verify == true)
-    needs: [prepare, publish]
+    needs: publish
     strategy:
       fail-fast: false
       matrix:
@@ -168,22 +107,19 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare.outputs.ref }}
-      - name: Test installation and upgrade from Pages
-        env:
-          ARCH: ${{ matrix.arch }}
-          PACKAGE_TAG: ${{ needs.prepare.outputs.tag }}
+      - name: Test exact-version installation from Pages
         run: |
+          version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
+          revision=$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)
+          package_tag="$version-r$revision"
           docker run --rm \
-            -e ARCH \
-            -e PACKAGE_TAG \
+            -e PACKAGE_TAG="$package_tag" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             alpine:edge sh -euxc '
               apk add gnupg
               wget -q https://angribot.github.io/apkbuilds/apkbuilds.rsa.pub -O /etc/apk/keys/apkbuilds.rsa.pub
-              echo "https://angribot.github.io/apkbuilds" >> /etc/apk/repositories
+              echo "https://angribot.github.io/apkbuilds/edge" >> /etc/apk/repositories
               ready=false
               for delay in 0 5 10 20 40 60; do
                 sleep "$delay"
