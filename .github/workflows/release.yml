@@ -35,7 +35,7 @@ jobs:
           version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
           revision=$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)
           tag="$version-r$revision"
-          if ! gh release view "$tag" >/dev/null 2>&1; then
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || ! gh release view "$tag" >/dev/null 2>&1; then
             echo publish=true >> "$GITHUB_OUTPUT"
           else
             echo publish=false >> "$GITHUB_OUTPUT"
@@ -133,8 +133,11 @@ jobs:
           tag=${{ needs.prepare.outputs.tag }}
           tar -C public -czf repository-x86_64.tar.gz x86_64
           tar -C public -czf repository-aarch64.tar.gz aarch64
-          gh release delete "$tag" --cleanup-tag --yes 2>/dev/null || true
-          gh release create "$tag" repository-*.tar.gz public/apkbuilds.rsa.pub --title "GnuPG $tag" --notes "Signed Alpine edge packages for x86_64 and aarch64."
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" repository-*.tar.gz public/apkbuilds.rsa.pub --clobber
+          else
+            gh release create "$tag" repository-*.tar.gz public/apkbuilds.rsa.pub --title "GnuPG $tag" --notes "Signed Alpine edge packages for x86_64 and aarch64."
+          fi
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
