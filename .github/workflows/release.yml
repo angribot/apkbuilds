@@ -147,3 +147,46 @@ jobs:
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  test-pages:
+    needs: [prepare, publish]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+      - name: Test installation and upgrade from Pages
+        env:
+          ARCH: ${{ matrix.arch }}
+          PACKAGE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          docker run --rm \
+            -e ARCH \
+            -e PACKAGE_TAG \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            alpine:edge sh -euxc '
+              apk add gnupg
+              wget -q https://angribot.github.io/apkbuilds/apkbuilds.rsa.pub -O /etc/apk/keys/apkbuilds.rsa.pub
+              echo "https://angribot.github.io/apkbuilds/$ARCH" >> /etc/apk/repositories
+              ready=false
+              for delay in 0 5 10 20 40 60; do
+                sleep "$delay"
+                if apk update && apk policy gnupg | grep -F "$PACKAGE_TAG"; then
+                  ready=true
+                  break
+                fi
+              done
+              test "$ready" = true
+              apk upgrade "gnupg=$PACKAGE_TAG"
+              apk info -e "gnupg=$PACKAGE_TAG"
+              scripts/test-package.sh "${PACKAGE_TAG%-r*}"
+            '
