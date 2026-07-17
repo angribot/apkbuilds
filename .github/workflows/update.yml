@@ -31,7 +31,7 @@ jobs:
       APKBUILD: ${{ matrix.apkbuild }}
       PR_BODY: ${{ matrix.body }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check stable release
         id: update
         env:
