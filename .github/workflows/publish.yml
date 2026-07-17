@@ -11,15 +11,44 @@ permissions:
 
 concurrency:
   group: publish
-  cancel-in-progress: false
 
 jobs:
-  build:
+  scope:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main' &&
+      (github.event.workflow_run.event == 'push' ||
+      github.event.workflow_run.event == 'workflow_dispatch') &&
       github.event.workflow_run.head_sha == github.sha
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.changes.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      - name: Select publication scope
+        id: changes
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          publish=true
+          deployed=$(curl -fsSL \
+            "https://angribot.github.io/apkbuilds/commit?run=$GITHUB_RUN_ID" || true)
+          if [[ "$deployed" =~ ^[0-9a-f]{40}$ ]] &&
+            git merge-base --is-ancestor "$deployed" "$HEAD_SHA"; then
+            files=$(git diff --name-only --no-renames "$deployed" "$HEAD_SHA")
+            publish=false
+            if printf '%s\n' "$files" | grep -Eq \
+              '^(packages/|scripts/test-package\.sh$|keys/apkbuilds\.rsa\.pub$|\.github/workflows/publish\.yml$)'; then
+              publish=true
+            fi
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: scope
+    if: needs.scope.outputs.publish == 'true'
     strategy:
       fail-fast: false
       matrix:
