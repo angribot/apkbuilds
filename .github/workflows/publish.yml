@@ -120,6 +120,7 @@ jobs:
               unset ABUILD_PRIVATE_KEY
               set -x
               trap "rm -f /tmp/apkbuilds.rsa" EXIT
+              cp /keys/apkbuilds.rsa.pub /etc/apk/keys/
               repository="/repository/$TARGET_ARCH"
               for package in "$repository"/*.apk; do
                 work=$(mktemp -d)
