@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches:
+      - "update/gnupg-*"
+      - "update/zerostack-*"
 
 permissions:
   actions: write
@@ -12,6 +18,7 @@ permissions:
 
 jobs:
   update:
+    if: github.event_name != 'workflow_run'
     strategy:
       fail-fast: false
       matrix:
@@ -55,3 +62,36 @@ jobs:
           git push origin "$branch"
           gh pr create --base main --head "$branch" --title "$PACKAGE: upgrade to $VERSION" --body "$PR_BODY"
           gh workflow run ci.yml --ref "$branch"
+
+  merge-update:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: ${{ github.event.workflow_run.head_branch }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Validate and merge update
+        run: |
+          case "$BRANCH" in
+            update/gnupg-*) expected=packages/gnupg/APKBUILD ;;
+            update/zerostack-*) expected=packages/zerostack/APKBUILD ;;
+            *) exit 1 ;;
+          esac
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
+            --base main --head "$BRANCH" \
+            --json number,author,headRefOid,isCrossRepository,files)
+          jq -e --arg sha "$HEAD_SHA" --arg path "$expected" '
+            length == 1 and
+            .[0].author.login == "app/github-actions" and
+            .[0].headRefOid == $sha and
+            (.[0].isCrossRepository | not) and
+            (.[0].files | length == 1) and
+            .[0].files[0].path == $path
+          ' <<< "$pr" > /dev/null
+          number=$(printf '%s' "$pr" | jq -r '.[0].number')
+          gh pr merge --repo "$GITHUB_REPOSITORY" "$number" --squash --delete-branch
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main -f build=false

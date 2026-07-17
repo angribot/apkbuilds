@@ -7,10 +7,14 @@ on:
   pull_request:
     paths-ignore: ["**.md"]
   workflow_dispatch:
+    inputs:
+      build:
+        description: Build packages
+        type: boolean
+        default: true
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref_name }}
@@ -19,16 +23,65 @@ concurrency:
 jobs:
   test-updater:
     runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.scope.outputs.build }}
+      gnupg: ${{ steps.scope.outputs.gnupg }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - run: python3 -m unittest discover -s tests
       - if: ${{ !startsWith(github.head_ref || github.ref_name, 'update/zerostack-') }}
         run: python3 scripts/update.py --check
       - if: ${{ !startsWith(github.head_ref || github.ref_name, 'update/gnupg-') }}
         run: python3 scripts/update-zerostack.py --check
+      - name: Select build scope
+        id: scope
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BUILD_REQUESTED: ${{ inputs.build }}
+        run: |
+          files=
+          build=false
+          gnupg=false
+          case "$GITHUB_EVENT_NAME" in
+            pull_request)
+              files=$(git diff --name-only --no-renames \
+                "$PR_BASE_SHA...$PR_HEAD_SHA")
+              ;;
+            workflow_dispatch)
+              case "$GITHUB_REF_NAME" in
+                update/gnupg-*|update/zerostack-*)
+                  files=$(git diff --name-only --no-renames \
+                    "origin/$DEFAULT_BRANCH...$GITHUB_SHA")
+                  ;;
+                *)
+                  if [ "$BUILD_REQUESTED" != false ]; then
+                    build=true
+                    gnupg=true
+                  fi
+                  ;;
+              esac
+              ;;
+          esac
+          if [ -n "$files" ]; then
+            if printf '%s\n' "$files" | grep -Eq \
+              '^(packages/|scripts/test-package\.sh$|\.github/workflows/ci\.yml$)'; then
+              build=true
+            fi
+            if printf '%s\n' "$files" | grep -Eq \
+              '^(packages/gnupg/|scripts/test-package\.sh$|\.github/workflows/ci\.yml$)'; then
+              gnupg=true
+            fi
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "gnupg=$gnupg" >> "$GITHUB_OUTPUT"
 
   build:
-    if: github.event_name != 'push' || github.ref_name != 'main'
+    needs: test-updater
+    if: needs.test-updater.outputs.build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -60,33 +113,22 @@ jobs:
           su builder -c 'abuild-keygen -a -n'
           cp /home/builder/.config/abuild/*.rsa.pub /etc/apk/keys/
       - name: Build GnuPG
+        if: needs.test-updater.outputs.gnupg == 'true'
         run: su builder -c "cd '$GITHUB_WORKSPACE/packages/gnupg' && abuild -r"
       - name: Build zerostack
         run: su builder -c "cd '$GITHUB_WORKSPACE/packages/zerostack' && abuild -r"
-      - name: Install and test
+      - name: Install and test GnuPG
+        if: needs.test-updater.outputs.gnupg == 'true'
         run: |
           repository=/home/builder/.local/share/abuild/packages
-          gnupg_version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
-          gnupg_revision=$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)
-          zerostack_version=$(sed -n 's/^pkgver=//p' packages/zerostack/APKBUILD)
-          zerostack_revision=$(sed -n 's/^pkgrel=//p' packages/zerostack/APKBUILD)
-          apk add --repository "$repository" \
-            "gnupg=$gnupg_version-r$gnupg_revision" \
-            "zerostack=$zerostack_version-r$zerostack_revision"
-          scripts/test-package.sh "$gnupg_version"
-          test "$(zerostack --version)" = "zerostack $zerostack_version"
-
-  merge-update:
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      (startsWith(github.ref_name, 'update/gnupg-') ||
-      startsWith(github.ref_name, 'update/zerostack-'))
-    needs: [test-updater, build]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - run: gh pr merge --repo "$GITHUB_REPOSITORY" --squash --delete-branch "$GITHUB_REF_NAME"
+          version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
+          revision=$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)
+          apk add --repository "$repository" "gnupg=$version-r$revision"
+          scripts/test-package.sh "$version"
+      - name: Install and test zerostack
+        run: |
+          repository=/home/builder/.local/share/abuild/packages
+          version=$(sed -n 's/^pkgver=//p' packages/zerostack/APKBUILD)
+          revision=$(sed -n 's/^pkgrel=//p' packages/zerostack/APKBUILD)
+          apk add --repository "$repository" "zerostack=$version-r$revision"
+          test "$(zerostack --version)" = "zerostack $version"
