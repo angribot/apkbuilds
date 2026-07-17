@@ -29,22 +29,14 @@ jobs:
           - arch: aarch64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    environment: release
-    env:
-      ABUILD_PRIVATE_KEY: ${{ secrets.ABUILD_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
-      - name: Build, install, and test
+      - name: Build with an ephemeral key
         run: |
-          version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
-          revision=$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)
-          package_version="$version-r$revision"
           mkdir -p "$RUNNER_TEMP/repository"
           docker run --rm \
-            -e ABUILD_PRIVATE_KEY \
-            -e PACKAGE_VERSION="$package_version" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -v "$RUNNER_TEMP/repository:/repository" \
             -w /workspace \
@@ -52,26 +44,131 @@ jobs:
               apk add alpine-sdk
               adduser -D builder
               addgroup builder abuild
-              mkdir -p /etc/doas.d /home/builder/.config/abuild
+              mkdir -p /etc/doas.d
               echo "permit nopass builder as root" > /etc/doas.d/builder.conf
-              printf "%s\n" "$ABUILD_PRIVATE_KEY" > /home/builder/.config/abuild/apkbuilds.rsa
-              cp keys/apkbuilds.rsa.pub /home/builder/.config/abuild/apkbuilds.rsa.pub
-              cp keys/apkbuilds.rsa.pub /etc/apk/keys/
-              echo "PACKAGER_PRIVKEY=/home/builder/.config/abuild/apkbuilds.rsa" > /home/builder/.config/abuild/abuild.conf
-              chmod 600 /home/builder/.config/abuild/apkbuilds.rsa
-              chown -R builder:builder /home/builder/.config /repository /workspace
+              chown -R builder:builder /repository /workspace
+              su builder -c "abuild-keygen -a -n"
               su builder -c "cd /workspace/packages/gnupg && REPODEST=/repository abuild -r"
-              apk add --repository /repository/packages "gnupg=$PACKAGE_VERSION"
-              scripts/test-package.sh "${PACKAGE_VERSION%-r*}"
+              su builder -c "cd /workspace/packages/zerostack && REPODEST=/repository abuild -r"
+            '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: staged-repository-${{ matrix.arch }}
+          path: ${{ runner.temp }}/repository/packages/${{ matrix.arch }}/
+          if-no-files-found: error
+
+  sign:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: staged-repository-${{ matrix.arch }}
+          path: ${{ runner.temp }}/repository/${{ matrix.arch }}
+      - name: Read package versions
+        run: |
+          echo "GNUPG_PACKAGE_VERSION=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)-r$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)" >> "$GITHUB_ENV"
+          echo "ZEROSTACK_PACKAGE_VERSION=$(sed -n 's/^pkgver=//p' packages/zerostack/APKBUILD)-r$(sed -n 's/^pkgrel=//p' packages/zerostack/APKBUILD)" >> "$GITHUB_ENV"
+      - name: Test staged packages with the repository read-only
+        run: |
+          docker run --rm \
+            -e GNUPG_PACKAGE_VERSION \
+            -e ZEROSTACK_PACKAGE_VERSION \
+            -v "$RUNNER_TEMP/repository:/repository:ro" \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
+            -w /workspace \
+            alpine:edge sh -euxc '
+              apk add --allow-untrusted --repository /repository \
+                "gnupg=$GNUPG_PACKAGE_VERSION" \
+                "zerostack=$ZEROSTACK_PACKAGE_VERSION"
+              scripts/test-package.sh "${GNUPG_PACKAGE_VERSION%-r*}"
+              test "$(zerostack --version)" = \
+                "zerostack ${ZEROSTACK_PACKAGE_VERSION%-r*}"
+            '
+      - name: Prepare isolated signer
+        run: |
+          docker build --tag apkbuilds-signer - <<'EOF'
+          FROM alpine:edge
+          RUN apk add --no-cache abuild
+          EOF
+      - name: Sign repository without network access
+        env:
+          ABUILD_PRIVATE_KEY: ${{ secrets.ABUILD_PRIVATE_KEY }}
+        run: |
+          docker run --rm --network none \
+            -e ABUILD_PRIVATE_KEY \
+            -e TARGET_ARCH="${{ matrix.arch }}" \
+            -v "$RUNNER_TEMP/repository:/repository" \
+            -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \
+            apkbuilds-signer sh -euxc '
+              umask 077
+              set +x
+              printf "%s\n" "$ABUILD_PRIVATE_KEY" > /tmp/apkbuilds.rsa
+              unset ABUILD_PRIVATE_KEY
+              set -x
+              trap "rm -f /tmp/apkbuilds.rsa" EXIT
+              repository="/repository/$TARGET_ARCH"
+              for package in "$repository"/*.apk; do
+                work=$(mktemp -d)
+                (
+                  cd "$work"
+                  abuild-gzsplit < "$package"
+                  abuild-sign -q \
+                    -k /tmp/apkbuilds.rsa \
+                    -p /keys/apkbuilds.rsa.pub \
+                    control.tar.gz
+                  cat control.tar.gz data.tar.gz > "$package"
+                )
+                rm -rf "$work"
+              done
+              cd "$repository"
+              rm -f APKINDEX.tar.gz Packages.adb
+              apk index --no-warnings --quiet \
+                --output APKINDEX.tar.gz \
+                --rewrite-arch "$TARGET_ARCH" \
+                ./*.apk
+              abuild-sign -q \
+                -k /tmp/apkbuilds.rsa \
+                -p /keys/apkbuilds.rsa.pub \
+                APKINDEX.tar.gz
+            '
+      - name: Verify signed packages without the private key
+        run: |
+          docker run --rm \
+            -e GNUPG_PACKAGE_VERSION \
+            -e ZEROSTACK_PACKAGE_VERSION \
+            -v "$RUNNER_TEMP/repository:/repository:ro" \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
+            -w /workspace \
+            alpine:edge sh -euxc '
+              cp keys/apkbuilds.rsa.pub /etc/apk/keys/
+              apk add --repository /repository \
+                "gnupg=$GNUPG_PACKAGE_VERSION" \
+                "zerostack=$ZEROSTACK_PACKAGE_VERSION"
+              scripts/test-package.sh "${GNUPG_PACKAGE_VERSION%-r*}"
+              test "$(zerostack --version)" = \
+                "zerostack ${ZEROSTACK_PACKAGE_VERSION%-r*}"
             '
       - uses: actions/upload-artifact@v4
         with:
           name: repository-${{ matrix.arch }}
-          path: ${{ runner.temp }}/repository/packages/${{ matrix.arch }}/
+          path: ${{ runner.temp }}/repository/${{ matrix.arch }}/
           if-no-files-found: error
 
   publish:
-    needs: build
+    needs: sign
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -99,6 +196,8 @@ jobs:
           test -s public/edge/aarch64/APKINDEX.tar.gz
           test -n "$(find public/edge/x86_64 -name 'gnupg-*.apk' -print -quit)"
           test -n "$(find public/edge/aarch64 -name 'gnupg-*.apk' -print -quit)"
+          test -n "$(find public/edge/x86_64 -name 'zerostack-*.apk' -print -quit)"
+          test -n "$(find public/edge/aarch64 -name 'zerostack-*.apk' -print -quit)"
       - uses: actions/upload-pages-artifact@v4
         with:
           path: public
@@ -123,11 +222,13 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
       - name: Test exact-version installation from Pages
         run: |
-          version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
-          revision=$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)
-          package_version="$version-r$revision"
+          gnupg_version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
+          gnupg_revision=$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)
+          zerostack_version=$(sed -n 's/^pkgver=//p' packages/zerostack/APKBUILD)
+          zerostack_revision=$(sed -n 's/^pkgrel=//p' packages/zerostack/APKBUILD)
           docker run --rm \
-            -e PACKAGE_VERSION="$package_version" \
+            -e GNUPG_PACKAGE_VERSION="$gnupg_version-r$gnupg_revision" \
+            -e ZEROSTACK_PACKAGE_VERSION="$zerostack_version-r$zerostack_revision" \
             -e PUBLISHED_SHA="${{ github.event.workflow_run.head_sha }}" \
             -e RUN_ID="${{ github.run_id }}" \
             -v "$GITHUB_WORKSPACE:/workspace" \
@@ -147,10 +248,14 @@ jobs:
               test "$ready" = true
               apk update
               repository="https://angribot.github.io/apkbuilds/edge/$(apk --print-arch)"
-              wget -q "$repository/gpg-$PACKAGE_VERSION.apk?run=$RUN_ID" -O /tmp/gpg.apk
-              wget -q "$repository/gnupg-$PACKAGE_VERSION.apk?run=$RUN_ID" -O /tmp/gnupg.apk
-              apk add --upgrade /tmp/gpg.apk /tmp/gnupg.apk
-              apk info -e "gpg=$PACKAGE_VERSION"
-              apk info -e "gnupg=$PACKAGE_VERSION"
-              scripts/test-package.sh "${PACKAGE_VERSION%-r*}"
+              wget -q "$repository/gpg-$GNUPG_PACKAGE_VERSION.apk?run=$RUN_ID" -O /tmp/gpg.apk
+              wget -q "$repository/gnupg-$GNUPG_PACKAGE_VERSION.apk?run=$RUN_ID" -O /tmp/gnupg.apk
+              wget -q "$repository/zerostack-$ZEROSTACK_PACKAGE_VERSION.apk?run=$RUN_ID" -O /tmp/zerostack.apk
+              apk add --upgrade /tmp/gpg.apk /tmp/gnupg.apk /tmp/zerostack.apk
+              apk info -e "gpg=$GNUPG_PACKAGE_VERSION"
+              apk info -e "gnupg=$GNUPG_PACKAGE_VERSION"
+              apk info -e "zerostack=$ZEROSTACK_PACKAGE_VERSION"
+              scripts/test-package.sh "${GNUPG_PACKAGE_VERSION%-r*}"
+              test "$(zerostack --version)" = \
+                "zerostack ${ZEROSTACK_PACKAGE_VERSION%-r*}"
             '

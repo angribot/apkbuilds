@@ -22,7 +22,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python3 -m unittest discover -s tests
-      - run: python3 scripts/update.py --check
+      - if: ${{ !startsWith(github.head_ref || github.ref_name, 'update/zerostack-') }}
+        run: python3 scripts/update.py --check
+      - if: ${{ !startsWith(github.head_ref || github.ref_name, 'update/gnupg-') }}
+        run: python3 scripts/update-zerostack.py --check
 
   build:
     if: github.event_name != 'push' || github.ref_name != 'main'
@@ -56,18 +59,28 @@ jobs:
           chown -R builder:builder "$GITHUB_WORKSPACE"
           su builder -c 'abuild-keygen -a -n'
           cp /home/builder/.config/abuild/*.rsa.pub /etc/apk/keys/
-      - name: Build
+      - name: Build GnuPG
         run: su builder -c "cd '$GITHUB_WORKSPACE/packages/gnupg' && abuild -r"
+      - name: Build zerostack
+        run: su builder -c "cd '$GITHUB_WORKSPACE/packages/zerostack' && abuild -r"
       - name: Install and test
         run: |
           repository=/home/builder/.local/share/abuild/packages
-          version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
-          revision=$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)
-          apk add --repository "$repository" "gnupg=$version-r$revision"
-          scripts/test-package.sh "$version"
+          gnupg_version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
+          gnupg_revision=$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)
+          zerostack_version=$(sed -n 's/^pkgver=//p' packages/zerostack/APKBUILD)
+          zerostack_revision=$(sed -n 's/^pkgrel=//p' packages/zerostack/APKBUILD)
+          apk add --repository "$repository" \
+            "gnupg=$gnupg_version-r$gnupg_revision" \
+            "zerostack=$zerostack_version-r$zerostack_revision"
+          scripts/test-package.sh "$gnupg_version"
+          test "$(zerostack --version)" = "zerostack $zerostack_version"
 
   merge-update:
-    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref_name, 'update/gnupg-')
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (startsWith(github.ref_name, 'update/gnupg-') ||
+      startsWith(github.ref_name, 'update/zerostack-'))
     needs: [test-updater, build]
     runs-on: ubuntu-latest
     permissions:
