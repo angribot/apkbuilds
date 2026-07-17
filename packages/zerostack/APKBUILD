@@ -1,0 +1,28 @@
+pkgname=zerostack
+pkgver=1.7.0
+pkgrel=0
+pkgdesc="Minimalistic coding agent written in Rust"
+url="https://github.com/gi-dellav/zerostack"
+arch="x86_64 aarch64"
+license="GPL-3.0-only"
+depends="bash"
+options="!check !strip" # staged APK is tested with its repository read-only
+
+case "$CARCH" in
+x86_64)
+	_sha512="7daee3af9e4ab18b419d827134948d81dc97948ef0549dcfac76dcf8bf40fcf9abf2a0f5067062d37747d73f6c5545d661468b765b1f72dffec3e9e1e352b176"
+	;;
+aarch64)
+	_sha512="3c2c5bac93ad684ec51b26196a265b16dfb76e5e5d16186b3f0bc218674336011fddc9cc50c59c9dc009c635cc01fa48adb6621094c42990ac2fc31de15ae838"
+	;;
+esac
+source="zerostack-$pkgver-$CARCH.tar.gz::https://github.com/gi-dellav/zerostack/releases/download/v$pkgver/zerostack-$CARCH-unknown-linux-musl.tar.gz"
+
+package() {
+	install -Dm755 "$srcdir/zerostack-$CARCH-unknown-linux-musl" \
+		"$pkgdir/usr/bin/zerostack"
+}
+
+sha512sums="
+$_sha512  zerostack-$pkgver-$CARCH.tar.gz
+"

@@ -1,4 +1,4 @@
-name: Update GnuPG
+name: Update packages
 
 on:
   schedule:
@@ -12,27 +12,46 @@ permissions:
 
 jobs:
   update:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: gnupg
+            updater: scripts/update.py
+            apkbuild: packages/gnupg/APKBUILD
+            body: Verified against a pinned official GnuPG release-signing fingerprint.
+          - package: zerostack
+            updater: scripts/update-zerostack.py
+            apkbuild: packages/zerostack/APKBUILD
+            body: Verified both musl release assets against GitHub-provided SHA-256 digests.
     runs-on: ubuntu-latest
+    env:
+      PACKAGE: ${{ matrix.package }}
+      UPDATER: ${{ matrix.updater }}
+      APKBUILD: ${{ matrix.apkbuild }}
+      PR_BODY: ${{ matrix.body }}
     steps:
       - uses: actions/checkout@v4
-      - name: Check official stable release
+      - name: Check stable release
         id: update
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          version=$(python3 scripts/update.py)
+          version=$(python3 "$UPDATER")
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          git diff --quiet && echo 'changed=false' >> "$GITHUB_OUTPUT" || echo 'changed=true' >> "$GITHUB_OUTPUT"
+          git diff --quiet -- "$APKBUILD" && echo 'changed=false' >> "$GITHUB_OUTPUT" || echo 'changed=true' >> "$GITHUB_OUTPUT"
       - name: Create update pull request
         if: steps.update.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.update.outputs.version }}
         run: |
-          branch="update/gnupg-$VERSION"
+          branch="update/$PACKAGE-$VERSION"
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git switch -c "$branch"
-          git add packages/gnupg/APKBUILD
-          git commit -m "gnupg: upgrade to $VERSION"
+          git add "$APKBUILD"
+          git commit -m "$PACKAGE: upgrade to $VERSION"
           git push origin "$branch"
-          gh pr create --base main --head "$branch" --title "gnupg: upgrade to $VERSION" --body "Verified against a pinned official GnuPG release-signing fingerprint."
+          gh pr create --base main --head "$branch" --title "$PACKAGE: upgrade to $VERSION" --body "$PR_BODY"
           gh workflow run ci.yml --ref "$branch"
