@@ -51,7 +51,7 @@ jobs:
               su builder -c "cd /workspace/packages/gnupg && REPODEST=/repository abuild -r"
               su builder -c "cd /workspace/packages/zerostack && REPODEST=/repository abuild -r"
             '
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: staged-repository-${{ matrix.arch }}
           path: ${{ runner.temp }}/repository/packages/${{ matrix.arch }}/
@@ -161,7 +161,7 @@ jobs:
               test "$(zerostack --version)" = \
                 "zerostack ${ZEROSTACK_PACKAGE_VERSION%-r*}"
             '
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: repository-${{ matrix.arch }}
           path: ${{ runner.temp }}/repository/${{ matrix.arch }}/
