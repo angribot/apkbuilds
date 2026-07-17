@@ -198,7 +198,7 @@ jobs:
           test -n "$(find public/edge/aarch64 -name 'gnupg-*.apk' -print -quit)"
           test -n "$(find public/edge/x86_64 -name 'zerostack-*.apk' -print -quit)"
           test -n "$(find public/edge/aarch64 -name 'zerostack-*.apk' -print -quit)"
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: public
       - name: Deploy GitHub Pages
