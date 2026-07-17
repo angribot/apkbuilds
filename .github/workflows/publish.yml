@@ -30,7 +30,7 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
       - name: Build with an ephemeral key
@@ -52,7 +52,7 @@ jobs:
               su builder -c "cd /workspace/packages/gnupg && REPODEST=/repository abuild -r"
               su builder -c "cd /workspace/packages/zerostack && REPODEST=/repository abuild -r"
             '
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: staged-repository-${{ matrix.arch }}
           path: ${{ runner.temp }}/repository/packages/${{ matrix.arch }}/
@@ -71,10 +71,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     environment: release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: staged-repository-${{ matrix.arch }}
           path: ${{ runner.temp }}/repository/${{ matrix.arch }}
@@ -163,7 +163,7 @@ jobs:
               test "$(zerostack --version)" = \
                 "zerostack ${ZEROSTACK_PACKAGE_VERSION%-r*}"
             '
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: repository-${{ matrix.arch }}
           path: ${{ runner.temp }}/repository/${{ matrix.arch }}/
@@ -180,10 +180,10 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: repository-*
           path: public
@@ -200,12 +200,12 @@ jobs:
           test -n "$(find public/edge/aarch64 -name 'gnupg-*.apk' -print -quit)"
           test -n "$(find public/edge/x86_64 -name 'zerostack-*.apk' -print -quit)"
           test -n "$(find public/edge/aarch64 -name 'zerostack-*.apk' -print -quit)"
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: public
       - name: Deploy GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
   test-pages:
     needs: publish
@@ -219,7 +219,7 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
       - name: Test exact-version installation from Pages

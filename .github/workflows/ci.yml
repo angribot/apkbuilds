@@ -20,7 +20,7 @@ jobs:
   test-updater:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: python3 -m unittest discover -s tests
       - if: ${{ !startsWith(github.head_ref || github.ref_name, 'update/zerostack-') }}
         run: python3 scripts/update.py --check
