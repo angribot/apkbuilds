@@ -1,5 +1,5 @@
 pkgname=zerostack
-pkgver=1.7.0
+pkgver=1.7.1
 pkgrel=0
 pkgdesc="Minimalistic coding agent written in Rust"
 url="https://github.com/gi-dellav/zerostack"
@@ -10,10 +10,10 @@ options="!check !strip" # staged APK is tested with its repository read-only
 
 case "$CARCH" in
 x86_64)
-	_sha512="7daee3af9e4ab18b419d827134948d81dc97948ef0549dcfac76dcf8bf40fcf9abf2a0f5067062d37747d73f6c5545d661468b765b1f72dffec3e9e1e352b176"
+	_sha512="d8f632a322fcae0e4c2449059021acac0eb8c0751f83a39752419f0e0a9005c56565a9c89f975a5607093b2cdf7fd2ae2325797dd229d1c2e6094822552b9a50"
 	;;
 aarch64)
-	_sha512="3c2c5bac93ad684ec51b26196a265b16dfb76e5e5d16186b3f0bc218674336011fddc9cc50c59c9dc009c635cc01fa48adb6621094c42990ac2fc31de15ae838"
+	_sha512="b9269ae9d64ea878f2a989fb9a7f420ac62e761bb0c0fd94ceb053b359265211d61359cc4ec456fceafc36048bae7160d983bfdd6fd36c9adbb17bfeb02e8b7b"
 	;;
 esac
 source="zerostack-$pkgver-$CARCH.tar.gz::https://github.com/gi-dellav/zerostack/releases/download/v$pkgver/zerostack-$CARCH-unknown-linux-musl.tar.gz"
