@@ -4,7 +4,9 @@ import hashlib
 import re
 import subprocess
 import tempfile
+import time
 import urllib.request
+from urllib.error import HTTPError, URLError
 from pathlib import Path
 
 BASE = "https://gnupg.org/ftp/gcrypt/gnupg"
@@ -21,8 +23,19 @@ KEYRING = ROOT / "keys/gnupg-release.asc"
 
 
 def download(url):
-    with urllib.request.urlopen(url, timeout=30) as response:
-        return response.read()
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(url, timeout=30) as response:
+                return response.read()
+        except HTTPError as error:
+            if error.code not in (408, 429) and not 500 <= error.code < 600:
+                raise
+            last_error = error
+        except (TimeoutError, URLError) as error:
+            last_error = error
+        if attempt < 2:
+            time.sleep(2**attempt)
+    raise last_error
 
 
 def latest_version(index):

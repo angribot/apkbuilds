@@ -39,6 +39,14 @@ class RepositoryTest(unittest.TestCase):
             ["gnupg", "zerostack"],
         )
 
+    def test_verify_pkgrel_requires_reset_for_upstream_updates_and_increment_for_rebuilds(self):
+        repository.verify_pkgrel(("2.5.21", 1), ("2.5.21", 2))
+        repository.verify_pkgrel(("2.5.21", 1), ("2.5.22", 0))
+        with self.assertRaisesRegex(ValueError, "must increase"):
+            repository.verify_pkgrel(("2.5.21", 1), ("2.5.21", 1))
+        with self.assertRaisesRegex(ValueError, "must be 0"):
+            repository.verify_pkgrel(("2.5.21", 1), ("2.5.22", 1))
+
     def test_retained_packages_excludes_selected_origin(self):
         packages = {
             "gpg": package("gpg", "2.5.21-r1", "gnupg", "Q1gpg"),

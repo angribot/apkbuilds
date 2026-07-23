@@ -25,7 +25,8 @@ jobs:
   scope:
     if: >-
       (github.event_name == 'workflow_dispatch' &&
-      github.ref_name == github.event.repository.default_branch) ||
+      github.ref_name == github.event.repository.default_branch &&
+      inputs.bootstrap == true) ||
       (github.event.workflow_run.conclusion == 'success' &&
       (github.event.workflow_run.event == 'push' ||
       github.event.workflow_run.event == 'workflow_dispatch') &&
@@ -36,7 +37,7 @@ jobs:
       gnupg: ${{ steps.changes.outputs.gnupg }}
       zerostack: ${{ steps.changes.outputs.zerostack }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.HEAD_SHA }}
           fetch-depth: 0
@@ -50,7 +51,8 @@ jobs:
           if [ "$BOOTSTRAP" = true ]; then
             origins='["gnupg","zerostack"]'
           else
-            deployed=$(curl -fsSL \
+            deployed=$(curl --connect-timeout 15 --max-time 60 --retry 3 \
+              --retry-connrefused -fsSL \
               "https://angribot.github.io/apkbuilds/commit?run=$GITHUB_RUN_ID")
             [[ "$deployed" =~ ^[0-9a-f]{40}$ ]] || {
               echo 'published commit marker is invalid; use bootstrap only for first publication' >&2
@@ -66,6 +68,14 @@ jobs:
               exit 1
             fi
             origins=$(printf '%s\n' "$files" | python3 scripts/repository.py scope)
+            for origin in gnupg zerostack; do
+              printf '%s\n' "$origins" | grep -Fq "\"$origin\"" || continue
+              previous="$RUNNER_TEMP/$origin-APKBUILD"
+              git show "$deployed:packages/$origin/APKBUILD" > "$previous"
+              python3 scripts/repository.py verify-pkgrel \
+                --previous "$previous" \
+                --current "packages/$origin/APKBUILD"
+            done
           fi
           publish=false
           gnupg=false
@@ -95,7 +105,7 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.HEAD_SHA }}
       - name: Build changed packages with an ephemeral key
@@ -116,6 +126,10 @@ jobs:
             -w /workspace \
             alpine:edge sh -euxc '
               apk add --no-cache alpine-sdk curl python3
+              download() {
+                curl --connect-timeout 15 --max-time 120 --retry 3 \
+                  --retry-connrefused -fsSL "$1" -o "$2"
+              }
               adduser -D builder
               addgroup builder abuild
               mkdir -p /etc/doas.d
@@ -126,14 +140,14 @@ jobs:
               if [ "$BOOTSTRAP" != true ]; then
                 previous_index=/tmp/previous-index.tar.gz
                 cp /workspace/keys/apkbuilds.rsa.pub /etc/apk/keys/
-                curl -fsSL "$REPOSITORY_URL/APKINDEX.tar.gz" -o "$previous_index"
+                download "$REPOSITORY_URL/APKINDEX.tar.gz" "$previous_index"
                 apk verify "$previous_index"
                 set -- --index "$previous_index"
                 [ "$BUILD_GNUPG" = true ] && set -- "$@" --origin gnupg
                 [ "$BUILD_ZEROSTACK" = true ] && set -- "$@" --origin zerostack
                 python3 /workspace/scripts/repository.py retained "$@" > /tmp/retained-packages
                 while IFS= read -r package; do
-                  curl -fsSL "$REPOSITORY_URL/$package" -o "$repository/$package"
+                  download "$REPOSITORY_URL/$package" "$repository/$package"
                 done < /tmp/retained-packages
                 if [ -s /tmp/retained-packages ]; then
                   apk verify "$repository"/*.apk
@@ -184,14 +198,16 @@ jobs:
                 --rewrite-arch "$TARGET_ARCH" \
                 "$repository"/*.apk
             '
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: staged-repository-${{ matrix.arch }}
           path: ${{ runner.temp }}/repository/packages/${{ matrix.arch }}/
           if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
 
   sign:
-    needs: build
+    needs: [scope, build]
     strategy:
       fail-fast: false
       matrix:
@@ -203,10 +219,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     environment: release
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.HEAD_SHA }}
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: staged-repository-${{ matrix.arch }}
           path: ${{ runner.temp }}/repository/${{ matrix.arch }}
@@ -219,16 +235,27 @@ jobs:
           docker run --rm \
             -e GNUPG_PACKAGE_VERSION \
             -e ZEROSTACK_PACKAGE_VERSION \
+            -e BUILD_GNUPG="${{ needs.scope.outputs.gnupg }}" \
+            -e BUILD_ZEROSTACK="${{ needs.scope.outputs.zerostack }}" \
             -v "$RUNNER_TEMP/repository:/repository:ro" \
             -v "$GITHUB_WORKSPACE:/workspace:ro" \
             -w /workspace \
             alpine:edge sh -euxc '
-              apk add --allow-untrusted --repository /repository \
-                "gnupg=$GNUPG_PACKAGE_VERSION" \
-                "zerostack=$ZEROSTACK_PACKAGE_VERSION"
-              scripts/test-package.sh "${GNUPG_PACKAGE_VERSION%-r*}"
-              test "$(zerostack --version)" = \
-                "zerostack ${ZEROSTACK_PACKAGE_VERSION%-r*}"
+              set -- apk add --allow-untrusted --repository /repository
+              if [ "$BUILD_GNUPG" = true ]; then
+                set -- "$@" "gnupg=$GNUPG_PACKAGE_VERSION"
+              fi
+              if [ "$BUILD_ZEROSTACK" = true ]; then
+                set -- "$@" "zerostack=$ZEROSTACK_PACKAGE_VERSION"
+              fi
+              "$@"
+              if [ "$BUILD_GNUPG" = true ]; then
+                scripts/test-package.sh "${GNUPG_PACKAGE_VERSION%-r*}"
+              fi
+              if [ "$BUILD_ZEROSTACK" = true ]; then
+                test "$(zerostack --version)" = \
+                  "zerostack ${ZEROSTACK_PACKAGE_VERSION%-r*}"
+              fi
             '
       - name: Prepare isolated signer
         run: |
@@ -262,7 +289,7 @@ jobs:
                 (
                   cd "$work"
                   abuild-gzsplit < "$package"
-                  abuild-sign -q \
+                  abuild-sign -q -t RSA256 \
                     -k /tmp/apkbuilds.rsa \
                     -p /keys/apkbuilds.rsa.pub \
                     control.tar.gz
@@ -277,7 +304,7 @@ jobs:
                 --output APKINDEX.tar.gz \
                 --rewrite-arch "$TARGET_ARCH" \
                 ./*.apk
-              abuild-sign -q \
+              abuild-sign -q -t RSA256 \
                 -k /tmp/apkbuilds.rsa \
                 -p /keys/apkbuilds.rsa.pub \
                 APKINDEX.tar.gz
@@ -287,23 +314,36 @@ jobs:
           docker run --rm \
             -e GNUPG_PACKAGE_VERSION \
             -e ZEROSTACK_PACKAGE_VERSION \
+            -e BUILD_GNUPG="${{ needs.scope.outputs.gnupg }}" \
+            -e BUILD_ZEROSTACK="${{ needs.scope.outputs.zerostack }}" \
             -v "$RUNNER_TEMP/repository:/repository:ro" \
             -v "$GITHUB_WORKSPACE:/workspace:ro" \
             -w /workspace \
             alpine:edge sh -euxc '
               cp keys/apkbuilds.rsa.pub /etc/apk/keys/
-              apk add --repository /repository \
-                "gnupg=$GNUPG_PACKAGE_VERSION" \
-                "zerostack=$ZEROSTACK_PACKAGE_VERSION"
-              scripts/test-package.sh "${GNUPG_PACKAGE_VERSION%-r*}"
-              test "$(zerostack --version)" = \
-                "zerostack ${ZEROSTACK_PACKAGE_VERSION%-r*}"
+              set -- apk add --repository /repository
+              if [ "$BUILD_GNUPG" = true ]; then
+                set -- "$@" "gnupg=$GNUPG_PACKAGE_VERSION"
+              fi
+              if [ "$BUILD_ZEROSTACK" = true ]; then
+                set -- "$@" "zerostack=$ZEROSTACK_PACKAGE_VERSION"
+              fi
+              "$@"
+              if [ "$BUILD_GNUPG" = true ]; then
+                scripts/test-package.sh "${GNUPG_PACKAGE_VERSION%-r*}"
+              fi
+              if [ "$BUILD_ZEROSTACK" = true ]; then
+                test "$(zerostack --version)" = \
+                  "zerostack ${ZEROSTACK_PACKAGE_VERSION%-r*}"
+              fi
             '
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: repository-${{ matrix.arch }}
           path: ${{ runner.temp }}/repository/${{ matrix.arch }}/
           if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
 
   publish:
     needs: sign
@@ -316,10 +356,10 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.HEAD_SHA }}
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: repository-*
           path: public
@@ -336,15 +376,15 @@ jobs:
           test -n "$(find public/edge/aarch64 -name 'gnupg-*.apk' -print -quit)"
           test -n "$(find public/edge/x86_64 -name 'zerostack-*.apk' -print -quit)"
           test -n "$(find public/edge/aarch64 -name 'zerostack-*.apk' -print -quit)"
-      - uses: actions/upload-pages-artifact@v5
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: public
       - name: Deploy GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5
 
   test-pages:
-    needs: publish
+    needs: [scope, publish]
     strategy:
       fail-fast: false
       matrix:
@@ -355,10 +395,10 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.HEAD_SHA }}
-      - name: Test exact-version installation from Pages
+      - name: Test changed package exact-version installation from Pages
         run: |
           gnupg_version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
           gnupg_revision=$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)
@@ -367,30 +407,41 @@ jobs:
           docker run --rm \
             -e GNUPG_PACKAGE_VERSION="$gnupg_version-r$gnupg_revision" \
             -e ZEROSTACK_PACKAGE_VERSION="$zerostack_version-r$zerostack_revision" \
+            -e BUILD_GNUPG="${{ needs.scope.outputs.gnupg }}" \
+            -e BUILD_ZEROSTACK="${{ needs.scope.outputs.zerostack }}" \
             -e PUBLISHED_SHA="${{ env.HEAD_SHA }}" \
             -e RUN_ID="${{ github.run_id }}" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             alpine:edge sh -euxc '
-              wget -q https://angribot.github.io/apkbuilds/apkbuilds.rsa.pub -O /etc/apk/keys/apkbuilds.rsa.pub
+              wget -q -T 15 -t 4 https://angribot.github.io/apkbuilds/apkbuilds.rsa.pub -O /etc/apk/keys/apkbuilds.rsa.pub
               echo "https://angribot.github.io/apkbuilds/edge" >> /etc/apk/repositories
               ready=false
               for delay in 0 5 10 20 40 60; do
                 sleep "$delay"
-                if [ "$(wget -qO- "https://angribot.github.io/apkbuilds/commit?run=$RUN_ID")" = "$PUBLISHED_SHA" ]; then
+                if [ "$(wget -q -T 15 -t 4 -O- "https://angribot.github.io/apkbuilds/commit?run=$RUN_ID")" = "$PUBLISHED_SHA" ]; then
                   ready=true
                   break
                 fi
               done
               test "$ready" = true
               apk update
-              apk add \
-                "gnupg=$GNUPG_PACKAGE_VERSION" \
-                "zerostack=$ZEROSTACK_PACKAGE_VERSION"
-              apk info -e "gpg=$GNUPG_PACKAGE_VERSION"
-              apk info -e "gnupg=$GNUPG_PACKAGE_VERSION"
-              apk info -e "zerostack=$ZEROSTACK_PACKAGE_VERSION"
-              scripts/test-package.sh "${GNUPG_PACKAGE_VERSION%-r*}"
-              test "$(zerostack --version)" = \
-                "zerostack ${ZEROSTACK_PACKAGE_VERSION%-r*}"
+              set -- apk add
+              if [ "$BUILD_GNUPG" = true ]; then
+                set -- "$@" "gnupg=$GNUPG_PACKAGE_VERSION"
+              fi
+              if [ "$BUILD_ZEROSTACK" = true ]; then
+                set -- "$@" "zerostack=$ZEROSTACK_PACKAGE_VERSION"
+              fi
+              "$@"
+              if [ "$BUILD_GNUPG" = true ]; then
+                apk info -e "gpg=$GNUPG_PACKAGE_VERSION"
+                apk info -e "gnupg=$GNUPG_PACKAGE_VERSION"
+                scripts/test-package.sh "${GNUPG_PACKAGE_VERSION%-r*}"
+              fi
+              if [ "$BUILD_ZEROSTACK" = true ]; then
+                apk info -e "zerostack=$ZEROSTACK_PACKAGE_VERSION"
+                test "$(zerostack --version)" = \
+                  "zerostack ${ZEROSTACK_PACKAGE_VERSION%-r*}"
+              fi
             '

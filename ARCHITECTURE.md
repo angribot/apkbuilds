@@ -17,14 +17,17 @@
 - Build only changed source-package groups; GnuPG's split packages are one atomic
   group, while zerostack is independent.
 - Assemble publication snapshots from release-key-verified unchanged APKs and new
-  package outputs; replacements must increase their package version.
+  package outputs; replacements must increase their package version. Reset
+  `pkgrel` to `0` when `pkgver` changes; otherwise increment `pkgrel`.
 - Keep update merging in the trusted default-branch workflow; merge only a
   bot-owned, single-APKBUILD PR at the exact SHA that passed read-only CI.
-- Dispatch publication directly after merging an update whose exact head SHA
-  passed CI; `GITHUB_TOKEN` suppresses its downstream `workflow_run` event.
-  Serialize deployments so post-deployment verification is never cancelled.
-- Build with ephemeral keys, then sign with the protected release key in a
-  network-disabled container.
+- Dispatch read-only CI after merging an update whose exact head SHA passed CI;
+  its successful `workflow_run` triggers publication. Manual publication is
+  limited to first-release bootstrap. Serialize deployments so post-deployment
+  verification is never cancelled.
+- Pin GitHub Actions to immutable commit SHAs and update them through Dependabot.
+- Build with ephemeral keys, then sign with the protected release key using
+  RSA/SHA-256 in a network-disabled container.
 - Compare main with the deployed commit marker and publish only when release
   inputs change; use the marker again to verify Pages propagation before exact
   package installation tests.
