@@ -14,8 +14,10 @@
 - Use native GitHub-hosted runners (`ubuntu-24.04` and `ubuntu-24.04-arm`), with
   no QEMU complexity while ARM runners are available.
 - Use only Python and shell standard tooling; no project dependencies are added.
-- Build pull requests only when package, smoke-test, or CI build inputs change;
-  zerostack-only changes do not rebuild GnuPG.
+- Build only changed source-package groups; GnuPG's split packages are one atomic
+  group, while zerostack is independent.
+- Assemble publication snapshots from release-key-verified unchanged APKs and new
+  package outputs; replacements must increase their package version.
 - Keep update merging in the trusted default-branch workflow; merge only a
   bot-owned, single-APKBUILD PR at the exact SHA that passed read-only CI.
 - Dispatch publication directly after merging an update whose exact head SHA

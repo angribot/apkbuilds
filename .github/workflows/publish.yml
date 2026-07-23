@@ -2,6 +2,11 @@ name: Publish
 
 on:
   workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: Create repository without a verified published baseline
+        type: boolean
+        default: false
   workflow_run:
     workflows: [CI]
     types: [completed]
@@ -28,6 +33,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       publish: ${{ steps.changes.outputs.publish }}
+      gnupg: ${{ steps.changes.outputs.gnupg }}
+      zerostack: ${{ steps.changes.outputs.zerostack }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -36,21 +43,44 @@ jobs:
       - name: Select publication scope
         id: changes
         env:
+          BOOTSTRAP: ${{ inputs.bootstrap }}
           HEAD_SHA: ${{ env.HEAD_SHA }}
         run: |
-          publish=true
-          deployed=$(curl -fsSL \
-            "https://angribot.github.io/apkbuilds/commit?run=$GITHUB_RUN_ID" || true)
-          if [[ "$deployed" =~ ^[0-9a-f]{40}$ ]] &&
-            git merge-base --is-ancestor "$deployed" "$HEAD_SHA"; then
+          origins='[]'
+          if [ "$BOOTSTRAP" = true ]; then
+            origins='["gnupg","zerostack"]'
+          else
+            deployed=$(curl -fsSL \
+              "https://angribot.github.io/apkbuilds/commit?run=$GITHUB_RUN_ID")
+            [[ "$deployed" =~ ^[0-9a-f]{40}$ ]] || {
+              echo 'published commit marker is invalid; use bootstrap only for first publication' >&2
+              exit 1
+            }
+            git merge-base --is-ancestor "$deployed" "$HEAD_SHA" || {
+              echo 'published commit is not an ancestor of this release' >&2
+              exit 1
+            }
             files=$(git diff --name-only --no-renames "$deployed" "$HEAD_SHA")
-            publish=false
-            if printf '%s\n' "$files" | grep -Eq \
-              '^(packages/|scripts/test-package\.sh$|keys/apkbuilds\.rsa\.pub$|\.github/workflows/publish\.yml$)'; then
-              publish=true
+            if printf '%s\n' "$files" | grep -Fxq 'keys/apkbuilds.rsa.pub'; then
+              echo 'release key changes require a separate key-rotation migration' >&2
+              exit 1
             fi
+            origins=$(printf '%s\n' "$files" | python3 scripts/repository.py scope)
+          fi
+          publish=false
+          gnupg=false
+          zerostack=false
+          if printf '%s\n' "$origins" | grep -Fq '"gnupg"'; then
+            publish=true
+            gnupg=true
+          fi
+          if printf '%s\n' "$origins" | grep -Fq '"zerostack"'; then
+            publish=true
+            zerostack=true
           fi
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "gnupg=$gnupg" >> "$GITHUB_OUTPUT"
+          echo "zerostack=$zerostack" >> "$GITHUB_OUTPUT"
 
   build:
     needs: scope
@@ -68,24 +98,91 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.HEAD_SHA }}
-      - name: Build with an ephemeral key
+      - name: Build changed packages with an ephemeral key
+        env:
+          BUILD_GNUPG: ${{ needs.scope.outputs.gnupg }}
+          BUILD_ZEROSTACK: ${{ needs.scope.outputs.zerostack }}
         run: |
-          mkdir -p "$RUNNER_TEMP/repository"
+          mkdir -p "$RUNNER_TEMP/repository/packages/${{ matrix.arch }}" "$RUNNER_TEMP/new"
           docker run --rm \
+            -e BOOTSTRAP="${{ inputs.bootstrap }}" \
+            -e BUILD_GNUPG \
+            -e BUILD_ZEROSTACK \
+            -e REPOSITORY_URL="https://angribot.github.io/apkbuilds/edge/${{ matrix.arch }}" \
+            -e TARGET_ARCH="${{ matrix.arch }}" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -v "$RUNNER_TEMP/repository:/repository" \
+            -v "$RUNNER_TEMP/new:/new" \
             -w /workspace \
             alpine:edge sh -euxc '
-              apk add alpine-sdk
+              apk add --no-cache alpine-sdk curl python3
               adduser -D builder
               addgroup builder abuild
               mkdir -p /etc/doas.d
               echo "permit nopass builder as root" > /etc/doas.d/builder.conf
-              chown -R builder:builder /repository /workspace
+              chown -R builder:builder /new /repository /workspace
+              repository="/repository/packages/$TARGET_ARCH"
+              previous_index=
+              if [ "$BOOTSTRAP" != true ]; then
+                previous_index=/tmp/previous-index.tar.gz
+                cp /workspace/keys/apkbuilds.rsa.pub /etc/apk/keys/
+                curl -fsSL "$REPOSITORY_URL/APKINDEX.tar.gz" -o "$previous_index"
+                apk verify "$previous_index"
+                set -- --index "$previous_index"
+                [ "$BUILD_GNUPG" = true ] && set -- "$@" --origin gnupg
+                [ "$BUILD_ZEROSTACK" = true ] && set -- "$@" --origin zerostack
+                python3 /workspace/scripts/repository.py retained "$@" > /tmp/retained-packages
+                while IFS= read -r package; do
+                  curl -fsSL "$REPOSITORY_URL/$package" -o "$repository/$package"
+                done < /tmp/retained-packages
+                if [ -s /tmp/retained-packages ]; then
+                  apk verify "$repository"/*.apk
+                  apk index --no-warnings --quiet \
+                    --output /tmp/retained-index.tar.gz \
+                    --rewrite-arch "$TARGET_ARCH" \
+                    "$repository"/*.apk
+                  set -- --previous-index "$previous_index" \
+                    --retained-index /tmp/retained-index.tar.gz
+                  [ "$BUILD_GNUPG" = true ] && set -- "$@" --origin gnupg
+                  [ "$BUILD_ZEROSTACK" = true ] && set -- "$@" --origin zerostack
+                  python3 /workspace/scripts/repository.py verify-retained "$@"
+                fi
+              fi
               su builder -c "abuild-keygen -a -n"
               cp /home/builder/.config/abuild/*.rsa.pub /etc/apk/keys/
-              su builder -c "cd /workspace/packages/gnupg && REPODEST=/repository abuild -r"
-              su builder -c "cd /workspace/packages/zerostack && REPODEST=/repository abuild -r"
+              if [ "$BUILD_GNUPG" = true ]; then
+                su builder -c "cd /workspace/packages/gnupg && REPODEST=/new abuild -r"
+              fi
+              if [ "$BUILD_ZEROSTACK" = true ]; then
+                su builder -c "cd /workspace/packages/zerostack && REPODEST=/new abuild -r"
+              fi
+              new_packages="/new/packages/$TARGET_ARCH"
+              test -n "$(find "$new_packages" -name "*.apk" -print -quit)"
+              apk verify "$new_packages"/*.apk
+              apk index --no-warnings --quiet \
+                --output /tmp/new-index.tar.gz \
+                --rewrite-arch "$TARGET_ARCH" \
+                "$new_packages"/*.apk
+              set -- --built-index /tmp/new-index.tar.gz
+              [ -n "$previous_index" ] && set -- --previous-index "$previous_index" "$@"
+              [ "$BUILD_GNUPG" = true ] && set -- "$@" --origin gnupg
+              [ "$BUILD_ZEROSTACK" = true ] && set -- "$@" --origin zerostack
+              python3 /workspace/scripts/repository.py replacements "$@" > /tmp/replacements
+              while IFS="$(printf "\\t")" read -r package new old; do
+                test "$(apk version -t "$new" "$old")" = ">" || {
+                  echo "$package must increase version: $old -> $new" >&2
+                  exit 1
+                }
+              done < /tmp/replacements
+              for package in "$new_packages"/*.apk; do basename "$package"; done | sort > "$repository/new-packages.txt"
+              test -s "$repository/new-packages.txt"
+              while IFS= read -r package; do
+                cp "$new_packages/$package" "$repository/$package"
+              done < "$repository/new-packages.txt"
+              apk index --no-warnings --quiet \
+                --output "$repository/APKINDEX.tar.gz" \
+                --rewrite-arch "$TARGET_ARCH" \
+                "$repository"/*.apk
             '
       - uses: actions/upload-artifact@v7
         with:
@@ -157,7 +254,10 @@ jobs:
               trap "rm -f /tmp/apkbuilds.rsa" EXIT
               cp /keys/apkbuilds.rsa.pub /etc/apk/keys/
               repository="/repository/$TARGET_ARCH"
-              for package in "$repository"/*.apk; do
+              test -s "$repository/new-packages.txt"
+              while IFS= read -r filename; do
+                package="$repository/$filename"
+                test -f "$package"
                 work=$(mktemp -d)
                 (
                   cd "$work"
@@ -169,7 +269,8 @@ jobs:
                   cat control.tar.gz data.tar.gz > "$package"
                 )
                 rm -rf "$work"
-              done
+              done < "$repository/new-packages.txt"
+              rm -f "$repository/new-packages.txt"
               cd "$repository"
               rm -f APKINDEX.tar.gz Packages.adb
               apk index --no-warnings --quiet \
@@ -271,7 +372,6 @@ jobs:
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             alpine:edge sh -euxc '
-              apk add gnupg
               wget -q https://angribot.github.io/apkbuilds/apkbuilds.rsa.pub -O /etc/apk/keys/apkbuilds.rsa.pub
               echo "https://angribot.github.io/apkbuilds/edge" >> /etc/apk/repositories
               ready=false
@@ -284,11 +384,9 @@ jobs:
               done
               test "$ready" = true
               apk update
-              repository="https://angribot.github.io/apkbuilds/edge/$(apk --print-arch)"
-              wget -q "$repository/gpg-$GNUPG_PACKAGE_VERSION.apk?run=$RUN_ID" -O /tmp/gpg.apk
-              wget -q "$repository/gnupg-$GNUPG_PACKAGE_VERSION.apk?run=$RUN_ID" -O /tmp/gnupg.apk
-              wget -q "$repository/zerostack-$ZEROSTACK_PACKAGE_VERSION.apk?run=$RUN_ID" -O /tmp/zerostack.apk
-              apk add --upgrade /tmp/gpg.apk /tmp/gnupg.apk /tmp/zerostack.apk
+              apk add \
+                "gnupg=$GNUPG_PACKAGE_VERSION" \
+                "zerostack=$ZEROSTACK_PACKAGE_VERSION"
               apk info -e "gpg=$GNUPG_PACKAGE_VERSION"
               apk info -e "gnupg=$GNUPG_PACKAGE_VERSION"
               apk info -e "zerostack=$ZEROSTACK_PACKAGE_VERSION"
