@@ -1,6 +1,7 @@
 name: Publish
 
 on:
+  workflow_dispatch:
   workflow_run:
     workflows: [CI]
     types: [completed]
@@ -9,28 +10,33 @@ on:
 permissions:
   contents: read
 
+env:
+  HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
 concurrency:
   group: publish
 
 jobs:
   scope:
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
+      (github.event_name == 'workflow_dispatch' &&
+      github.ref_name == github.event.repository.default_branch) ||
+      (github.event.workflow_run.conclusion == 'success' &&
       (github.event.workflow_run.event == 'push' ||
       github.event.workflow_run.event == 'workflow_dispatch') &&
-      github.event.workflow_run.head_sha == github.sha
+      github.event.workflow_run.head_sha == github.sha)
     runs-on: ubuntu-latest
     outputs:
       publish: ${{ steps.changes.outputs.publish }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.HEAD_SHA }}
           fetch-depth: 0
       - name: Select publication scope
         id: changes
         env:
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ env.HEAD_SHA }}
         run: |
           publish=true
           deployed=$(curl -fsSL \
@@ -61,7 +67,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.HEAD_SHA }}
       - name: Build with an ephemeral key
         run: |
           mkdir -p "$RUNNER_TEMP/repository"
@@ -102,7 +108,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.HEAD_SHA }}
       - uses: actions/download-artifact@v8
         with:
           name: staged-repository-${{ matrix.arch }}
@@ -211,7 +217,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.HEAD_SHA }}
       - uses: actions/download-artifact@v8
         with:
           pattern: repository-*
@@ -222,7 +228,7 @@ jobs:
           mv public/repository-x86_64 public/edge/x86_64
           mv public/repository-aarch64 public/edge/aarch64
           cp keys/apkbuilds.rsa.pub public/
-          printf '%s\n' '${{ github.event.workflow_run.head_sha }}' > public/commit
+          printf '%s\n' '${{ env.HEAD_SHA }}' > public/commit
           test -s public/edge/x86_64/APKINDEX.tar.gz
           test -s public/edge/aarch64/APKINDEX.tar.gz
           test -n "$(find public/edge/x86_64 -name 'gnupg-*.apk' -print -quit)"
@@ -250,7 +256,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.HEAD_SHA }}
       - name: Test exact-version installation from Pages
         run: |
           gnupg_version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
@@ -260,7 +266,7 @@ jobs:
           docker run --rm \
             -e GNUPG_PACKAGE_VERSION="$gnupg_version-r$gnupg_revision" \
             -e ZEROSTACK_PACKAGE_VERSION="$zerostack_version-r$zerostack_revision" \
-            -e PUBLISHED_SHA="${{ github.event.workflow_run.head_sha }}" \
+            -e PUBLISHED_SHA="${{ env.HEAD_SHA }}" \
             -e RUN_ID="${{ github.run_id }}" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \

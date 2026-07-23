@@ -18,8 +18,9 @@
   zerostack-only changes do not rebuild GnuPG.
 - Keep update merging in the trusted default-branch workflow; merge only a
   bot-owned, single-APKBUILD PR at the exact SHA that passed read-only CI.
-- Publish automatically only after successful CI for the current main SHA;
-  serialize deployments so post-deployment verification is never cancelled.
+- Dispatch publication directly after merging an update whose exact head SHA
+  passed CI; `GITHUB_TOKEN` suppresses its downstream `workflow_run` event.
+  Serialize deployments so post-deployment verification is never cancelled.
 - Build with ephemeral keys, then sign with the protected release key in a
   network-disabled container.
 - Compare main with the deployed commit marker and publish only when release
