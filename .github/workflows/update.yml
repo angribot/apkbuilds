@@ -4,12 +4,6 @@ on:
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches:
-      - "update/gnupg-*"
-      - "update/zerostack-*"
 
 permissions:
   actions: write
@@ -18,7 +12,6 @@ permissions:
 
 jobs:
   update:
-    if: github.event_name != 'workflow_run'
     strategy:
       fail-fast: false
       matrix:
@@ -48,12 +41,24 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           git diff --quiet -- "$APKBUILD" && echo 'changed=false' >> "$GITHUB_OUTPUT" || echo 'changed=true' >> "$GITHUB_OUTPUT"
       - name: Create update pull request
+        id: create
         if: steps.update.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.update.outputs.version }}
         run: |
           branch="update/$PACKAGE-$VERSION"
+          if [ "$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
+            --base main --head "$branch" --json number --jq 'length')" -gt 0 ]; then
+            echo "An update pull request already exists for $PACKAGE $VERSION."
+            echo 'created=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then
+            echo "Update branch $branch already exists."
+            echo 'created=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git switch -c "$branch"
@@ -61,21 +66,27 @@ jobs:
           git commit -m "$PACKAGE: upgrade to $VERSION"
           git push origin "$branch"
           gh pr create --base main --head "$branch" --title "$PACKAGE: upgrade to $VERSION" --body "$PR_BODY"
-          gh workflow run ci.yml --ref "$branch"
-
-  merge-update:
-    if: >-
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ github.token }}
-      BRANCH: ${{ github.event.workflow_run.head_branch }}
-      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-    steps:
-      - name: Validate and merge update
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo 'created=true' >> "$GITHUB_OUTPUT"
+      - name: Validate, merge, and publish update
+        if: steps.create.outputs.created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.create.outputs.branch }}
+          HEAD_SHA: ${{ steps.create.outputs.head_sha }}
         run: |
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+          run_id=
+          for _ in $(seq 1 30); do
+            run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
+              --branch "$BRANCH" --event workflow_dispatch --limit 1 \
+              --json databaseId --jq '.[0].databaseId // empty')
+            [ -n "$run_id" ] && break
+            sleep 2
+          done
+          test -n "$run_id"
+          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status
           case "$BRANCH" in
             update/gnupg-*) expected=packages/gnupg/APKBUILD ;;
             update/zerostack-*) expected=packages/zerostack/APKBUILD ;;
@@ -94,4 +105,4 @@ jobs:
           ' <<< "$pr" > /dev/null
           number=$(printf '%s' "$pr" | jq -r '.[0].number')
           gh pr merge --repo "$GITHUB_REPOSITORY" "$number" --squash --delete-branch
-          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main -f build=false
+          gh workflow run publish.yml --repo "$GITHUB_REPOSITORY" --ref main
