@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import re
 import sys
 import tarfile
 from dataclasses import dataclass
@@ -31,6 +32,24 @@ def package_origins(paths):
         for origin, directory in PACKAGE_PATHS.items()
         if any(path.startswith(directory) for path in paths)
     )
+
+
+def apkbuild_release(path):
+    text = Path(path).read_text()
+    version = re.search(r"^pkgver=(\S+)$", text, re.MULTILINE)
+    revision = re.search(r"^pkgrel=(\d+)$", text, re.MULTILINE)
+    if not version or not revision:
+        raise ValueError(f"pkgver or pkgrel not found: {path}")
+    return version.group(1), int(revision.group(1))
+
+
+def verify_pkgrel(previous, current):
+    previous_version, previous_revision = previous
+    current_version, current_revision = current
+    if current_version != previous_version and current_revision != 0:
+        raise ValueError("pkgrel must be 0 when pkgver changes")
+    if current_version == previous_version and current_revision <= previous_revision:
+        raise ValueError("pkgrel must increase when pkgver is unchanged")
 
 
 def component(value, field):
@@ -150,6 +169,10 @@ def command_replacements(args):
         print(f"{name}\t{new}\t{old}")
 
 
+def command_verify_pkgrel(args):
+    verify_pkgrel(apkbuild_release(args.previous), apkbuild_release(args.current))
+
+
 def main():
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
@@ -173,6 +196,11 @@ def main():
     compare.add_argument("--built-index", type=Path, required=True)
     compare.add_argument("--origin", action="append", default=[])
     compare.set_defaults(handler=command_replacements)
+
+    pkgrel = commands.add_parser("verify-pkgrel")
+    pkgrel.add_argument("--previous", type=Path, required=True)
+    pkgrel.add_argument("--current", type=Path, required=True)
+    pkgrel.set_defaults(handler=command_verify_pkgrel)
 
     args = parser.parse_args()
     try:

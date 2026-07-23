@@ -31,7 +31,7 @@ jobs:
       APKBUILD: ${{ matrix.apkbuild }}
       PR_BODY: ${{ matrix.body }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Check stable release
         id: update
         env:
@@ -105,4 +105,4 @@ jobs:
           ' <<< "$pr" > /dev/null
           number=$(printf '%s' "$pr" | jq -r '.[0].number')
           gh pr merge --repo "$GITHUB_REPOSITORY" "$number" --squash --delete-branch
-          gh workflow run publish.yml --repo "$GITHUB_REPOSITORY" --ref main
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main -f build=false

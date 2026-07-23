@@ -30,7 +30,7 @@ jobs:
       package_gnupg: ${{ steps.scope.outputs.package_gnupg }}
       package_zerostack: ${{ steps.scope.outputs.package_zerostack }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
       - run: python3 -m unittest discover -s tests
@@ -44,9 +44,11 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
           BUILD_REQUESTED: ${{ inputs.build }}
         run: |
           files=
+          version_base=
           build=false
           gnupg=false
           zerostack=false
@@ -54,14 +56,23 @@ jobs:
           package_zerostack=false
           case "$GITHUB_EVENT_NAME" in
             pull_request)
+              version_base=$PR_BASE_SHA
               files=$(git diff --name-only --no-renames \
-                "$PR_BASE_SHA...$PR_HEAD_SHA")
+                "$version_base...$PR_HEAD_SHA")
+              ;;
+            push)
+              if [ "$PUSH_BEFORE" != 0000000000000000000000000000000000000000 ]; then
+                version_base=$PUSH_BEFORE
+                files=$(git diff --name-only --no-renames \
+                  "$version_base...$GITHUB_SHA")
+              fi
               ;;
             workflow_dispatch)
               case "$GITHUB_REF_NAME" in
                 update/gnupg-*|update/zerostack-*)
+                  version_base="origin/$DEFAULT_BRANCH"
                   files=$(git diff --name-only --no-renames \
-                    "origin/$DEFAULT_BRANCH...$GITHUB_SHA")
+                    "$version_base...$GITHUB_SHA")
                   ;;
                 *)
                   if [ "$BUILD_REQUESTED" != false ]; then
@@ -98,6 +109,29 @@ jobs:
           echo "zerostack=$zerostack" >> "$GITHUB_OUTPUT"
           echo "package_gnupg=$package_gnupg" >> "$GITHUB_OUTPUT"
           echo "package_zerostack=$package_zerostack" >> "$GITHUB_OUTPUT"
+          echo "version_base=$version_base" >> "$GITHUB_OUTPUT"
+      - name: Enforce package version semantics
+        if: >-
+          steps.scope.outputs.package_gnupg == 'true' ||
+          steps.scope.outputs.package_zerostack == 'true'
+        env:
+          VERSION_BASE: ${{ steps.scope.outputs.version_base }}
+          PACKAGE_GNUPG: ${{ steps.scope.outputs.package_gnupg }}
+          PACKAGE_ZEROSTACK: ${{ steps.scope.outputs.package_zerostack }}
+        run: |
+          test -n "$VERSION_BASE"
+          for origin in gnupg zerostack; do
+            case "$origin" in
+              gnupg) selected=$PACKAGE_GNUPG ;;
+              zerostack) selected=$PACKAGE_ZEROSTACK ;;
+            esac
+            [ "$selected" = true ] || continue
+            previous="$RUNNER_TEMP/$origin-APKBUILD"
+            git show "$VERSION_BASE:packages/$origin/APKBUILD" > "$previous"
+            python3 scripts/repository.py verify-pkgrel \
+              --previous "$previous" \
+              --current "packages/$origin/APKBUILD"
+          done
 
   build:
     needs: test-updater
@@ -148,7 +182,7 @@ jobs:
         run: |
           cp keys/apkbuilds.rsa.pub /etc/apk/keys/
           previous=/tmp/previous-index.tar.gz
-          wget -q "https://angribot.github.io/apkbuilds/edge/${{ matrix.arch }}/APKINDEX.tar.gz" -O "$previous"
+          wget -q -T 15 -t 4 "https://angribot.github.io/apkbuilds/edge/${{ matrix.arch }}/APKINDEX.tar.gz" -O "$previous"
           apk verify "$previous"
           repository=/home/builder/.local/share/abuild/packages
           mkdir /tmp/new-packages
