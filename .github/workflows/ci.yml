@@ -97,10 +97,6 @@ jobs:
             if printf '%s\n' "$files" | grep -Eq '^scripts/test-package\.sh$'; then
               gnupg=true
             fi
-            if printf '%s\n' "$files" | grep -Eq '^\.github/workflows/ci\.yml$'; then
-              gnupg=true
-              zerostack=true
-            fi
           fi
           if [ "$gnupg" = true ] || [ "$zerostack" = true ]; then
             build=true
