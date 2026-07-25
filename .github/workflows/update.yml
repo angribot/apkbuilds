@@ -80,8 +80,9 @@ jobs:
           run_id=
           for _ in $(seq 1 30); do
             run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
-              --branch "$BRANCH" --event workflow_dispatch --limit 1 \
-              --json databaseId --jq '.[0].databaseId // empty')
+              --branch "$BRANCH" --event workflow_dispatch --limit 20 \
+              --json databaseId,headSha \
+              --jq 'map(select(.headSha == env.HEAD_SHA)) | .[0].databaseId // empty')
             [ -n "$run_id" ] && break
             sleep 2
           done

@@ -125,16 +125,11 @@ jobs:
             -v "$RUNNER_TEMP/new:/new" \
             -w /workspace \
             alpine:edge sh -euxc '
-              apk add --no-cache alpine-sdk curl python3
+              sh /workspace/scripts/prepare-builder.sh /new /repository /workspace
               download() {
                 curl --connect-timeout 15 --max-time 120 --retry 3 \
                   --retry-connrefused -fsSL "$1" -o "$2"
               }
-              adduser -D builder
-              addgroup builder abuild
-              mkdir -p /etc/doas.d
-              echo "permit nopass builder as root" > /etc/doas.d/builder.conf
-              chown -R builder:builder /new /repository /workspace
               repository="/repository/packages/$TARGET_ARCH"
               previous_index=
               if [ "$BOOTSTRAP" != true ]; then
