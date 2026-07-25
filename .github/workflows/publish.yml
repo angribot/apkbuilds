@@ -108,6 +108,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.HEAD_SHA }}
+          fetch-depth: 0
       - name: Build changed packages with an ephemeral key
         env:
           BUILD_GNUPG: ${{ needs.scope.outputs.gnupg }}
