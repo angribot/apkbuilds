@@ -21,10 +21,16 @@
   `pkgrel` to `0` when `pkgver` changes; otherwise increment `pkgrel`.
 - Keep update merging in the trusted default-branch workflow; merge only a
   bot-owned, single-APKBUILD PR at the exact SHA that passed read-only CI.
+  Select the CI run to watch by head SHA, since a recreated branch can leave
+  earlier runs that match by branch name and event alone.
 - Dispatch read-only CI after merging an update whose exact head SHA passed CI;
   its successful `workflow_run` triggers publication. Manual publication is
   limited to first-release bootstrap. Serialize deployments so post-deployment
   verification is never cancelled.
+- Prepare build containers from one shared script so CI and publication cannot
+  install divergent toolchains.
+- Check upstream version drift only in the scheduled update workflow; a new
+  upstream release must not fail unrelated pull requests.
 - Pin GitHub Actions to immutable commit SHAs and update them through Dependabot.
 - Build with ephemeral keys, then sign with the protected release key using
   RSA/SHA-256 in a network-disabled container.

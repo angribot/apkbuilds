@@ -35,10 +35,6 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - run: python3 -m unittest discover -s tests
-      - if: ${{ !startsWith(github.head_ref || github.ref_name, 'update/zerostack-') }}
-        run: python3 scripts/update.py --check
-      - if: ${{ !startsWith(github.head_ref || github.ref_name, 'update/gnupg-') }}
-        run: python3 scripts/update-zerostack.py --check
       - name: Select build scope
         id: scope
         env:
@@ -96,6 +92,10 @@ jobs:
             fi
             if printf '%s\n' "$files" | grep -Eq '^scripts/test-package\.sh$'; then
               gnupg=true
+            fi
+            if printf '%s\n' "$files" | grep -Eq '^scripts/prepare-builder\.sh$'; then
+              gnupg=true
+              zerostack=true
             fi
           fi
           if [ "$gnupg" = true ] || [ "$zerostack" = true ]; then
@@ -155,12 +155,7 @@ jobs:
           git checkout --detach FETCH_HEAD
       - name: Prepare builder
         run: |
-          apk add alpine-sdk python3
-          adduser -D builder
-          addgroup builder abuild
-          mkdir -p /etc/doas.d
-          echo 'permit nopass builder as root' > /etc/doas.d/builder.conf
-          chown -R builder:builder "$GITHUB_WORKSPACE"
+          sh scripts/prepare-builder.sh "$GITHUB_WORKSPACE"
           su builder -c 'abuild-keygen -a -n'
           cp /home/builder/.config/abuild/*.rsa.pub /etc/apk/keys/
       - name: Build GnuPG
