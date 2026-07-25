@@ -164,6 +164,13 @@ jobs:
       - name: Build zerostack
         if: needs.test-updater.outputs.zerostack == 'true'
         run: su builder -c "cd '$GITHUB_WORKSPACE/packages/zerostack' && abuild -r"
+      - name: TEMPORARY probe package provenance
+        run: |
+          repository=/home/builder/.local/share/abuild/packages
+          for apk in $(find "$repository" -name 'gnupg-2*.apk' -o -name 'zerostack-1*.apk'); do
+            echo "== $apk"
+            tar xzOf "$apk" .PKGINFO 2>/dev/null | grep -E '^(commit|builddate|pkgname) =' || true
+          done
       - name: Verify replacement versions
         if: >-
           needs.test-updater.outputs.package_gnupg == 'true' ||
