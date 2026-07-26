@@ -481,6 +481,7 @@ jobs:
             -v "$GITHUB_WORKSPACE/public:/repository:ro" \
             -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/etc/apk/keys/apkbuilds.rsa.pub:ro" \
             alpine:edge sh -ec '
+              echo verifier-started
               for arch in x86_64 aarch64; do
                 index="/repository/edge/$arch/APKINDEX.tar.gz"
                 echo "Verifying $index"
