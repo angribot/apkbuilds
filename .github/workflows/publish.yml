@@ -205,7 +205,6 @@ jobs:
             -v "$RUNNER_TEMP/new:/new" \
             -w /workspace \
             alpine:edge sh -euxc '
-              [ -n "$ORIGINS" ] || exit 0
               sh /workspace/scripts/prepare-builder.sh /new /repository /workspace
               download() {
                 curl --connect-timeout 15 --max-time 120 --retry 3 \
@@ -218,11 +217,16 @@ jobs:
                 cp /workspace/keys/apkbuilds.rsa.pub /etc/apk/keys/
                 download "$REPOSITORY_URL/APKINDEX.tar.gz" "$previous_index"
                 apk verify "$previous_index"
-                set -- --index "$previous_index"
-                for origin in $(printf %s "$ORIGINS" | tr , \ ); do
-                  set -- "$@" --origin "$origin"
-                done
-                python3 /workspace/scripts/repository.py retained "$@" > /tmp/retained-packages
+                if [ -n "$ORIGINS" ]; then
+                  set -- --index "$previous_index"
+                  for origin in $(printf %s "$ORIGINS" | tr , \ ); do
+                    set -- "$@" --origin "$origin"
+                  done
+                  python3 /workspace/scripts/repository.py retained "$@" > /tmp/retained-packages
+                else
+                  python3 /workspace/scripts/repository.py filenames \
+                    --index "$previous_index" > /tmp/retained-packages
+                fi
                 while IFS= read -r package; do
                   download "$REPOSITORY_URL/$package" "$repository/$package"
                 done < /tmp/retained-packages
@@ -232,12 +236,14 @@ jobs:
                     --output /tmp/retained-index.tar.gz \
                     --rewrite-arch "$TARGET_ARCH" \
                     "$repository"/*.apk
-                  set -- --previous-index "$previous_index" \
-                    --retained-index /tmp/retained-index.tar.gz
-                  for origin in $(printf %s "$ORIGINS" | tr , \ ); do
-                    set -- "$@" --origin "$origin"
-                  done
-                  python3 /workspace/scripts/repository.py verify-retained "$@"
+                  if [ -n "$ORIGINS" ]; then
+                    set -- --previous-index "$previous_index" \
+                      --retained-index /tmp/retained-index.tar.gz
+                    for origin in $(printf %s "$ORIGINS" | tr , \ ); do
+                      set -- "$@" --origin "$origin"
+                    done
+                    python3 /workspace/scripts/repository.py verify-retained "$@"
+                  fi
                 fi
               fi
               [ "$BUILD_ALLOWED" = true ] || exit 0
