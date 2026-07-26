@@ -87,7 +87,12 @@ jobs:
             sleep 2
           done
           test -n "$run_id"
-          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status
+          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY"
+          jobs=$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json jobs)
+          jq -e '
+            any(.jobs[]; .name == "test-updater" and .conclusion == "success") and
+            any(.jobs[]; (.name | startswith("build (")) and .conclusion == "success")
+          ' <<< "$jobs" > /dev/null
           case "$BRANCH" in
             update/gnupg-*) expected=packages/gnupg/APKBUILD ;;
             update/zerostack-*) expected=packages/zerostack/APKBUILD ;;

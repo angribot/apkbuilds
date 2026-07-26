@@ -13,6 +13,7 @@ on:
     branches: [main]
 
 permissions:
+  actions: read
   contents: read
 
 env:
@@ -27,15 +28,17 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
       github.ref_name == github.event.repository.default_branch &&
       inputs.bootstrap == true) ||
-      (github.event.workflow_run.conclusion == 'success' &&
+      (github.event_name == 'workflow_run' &&
       (github.event.workflow_run.event == 'push' ||
       github.event.workflow_run.event == 'workflow_dispatch') &&
       github.event.workflow_run.head_sha == github.sha)
     runs-on: ubuntu-latest
     outputs:
       publish: ${{ steps.changes.outputs.publish }}
-      gnupg: ${{ steps.changes.outputs.gnupg }}
-      zerostack: ${{ steps.changes.outputs.zerostack }}
+      x86_64_publish: ${{ steps.changes.outputs.x86_64_publish }}
+      x86_64_origins: ${{ steps.changes.outputs.x86_64_origins }}
+      aarch64_publish: ${{ steps.changes.outputs.aarch64_publish }}
+      aarch64_origins: ${{ steps.changes.outputs.aarch64_origins }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -46,51 +49,106 @@ jobs:
         env:
           BOOTSTRAP: ${{ inputs.bootstrap }}
           HEAD_SHA: ${{ env.HEAD_SHA }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          origins='[]'
-          if [ "$BOOTSTRAP" = true ]; then
-            origins='["gnupg","zerostack"]'
-          else
-            deployed=$(curl --connect-timeout 15 --max-time 60 --retry 3 \
-              --retry-connrefused -fsSL \
-              "https://angribot.github.io/apkbuilds/commit?run=$GITHUB_RUN_ID")
-            [[ "$deployed" =~ ^[0-9a-f]{40}$ ]] || {
-              echo 'published commit marker is invalid; use bootstrap only for first publication' >&2
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
+            jobs=$(gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/actions/runs/${{ github.event.workflow_run.id }}/jobs" \
+              --jq '.jobs[] | [.name, .conclusion] | @tsv')
+            printf '%s\n' "$jobs" | grep -Fqx $'test-updater\tsuccess' || {
+              echo 'CI updater checks failed' >&2
               exit 1
             }
-            git merge-base --is-ancestor "$deployed" "$HEAD_SHA" || {
-              echo 'published commit is not an ancestor of this release' >&2
-              exit 1
-            }
-            files=$(git diff --name-only --no-renames "$deployed" "$HEAD_SHA")
-            if printf '%s\n' "$files" | grep -Fxq 'keys/apkbuilds.rsa.pub'; then
-              echo 'release key changes require a separate key-rotation migration' >&2
+            build_jobs=$(printf '%s\n' "$jobs" | grep -E '^build \(' || true)
+            if [ -n "$build_jobs" ] && ! printf '%s\n' "$build_jobs" | grep -q $'\tsuccess$'; then
+              echo 'all architecture builds failed' >&2
               exit 1
             fi
-            origins=$(printf '%s\n' "$files" | python3 scripts/repository.py scope)
-            for origin in gnupg zerostack; do
-              printf '%s\n' "$origins" | grep -Fq "\"$origin\"" || continue
-              previous="$RUNNER_TEMP/$origin-APKBUILD"
-              git show "$deployed:packages/$origin/APKBUILD" > "$previous"
-              python3 scripts/repository.py verify-pkgrel \
-                --previous "$previous" \
-                --current "packages/$origin/APKBUILD"
+          fi
+          supports_arch() {
+            declared=$(sed -n 's/^arch="\(.*\)"$/\1/p' "$2")
+            [ -z "$declared" ] && return 0
+            case " $declared " in
+              *" !$1 "*) return 1 ;;
+              *" all "*|*" noarch "*|*" $1 "*) return 0 ;;
+            esac
+            return 1
+          }
+          all_origins_for_arch() {
+            for origin in $(find packages -mindepth 2 -maxdepth 2 -name APKBUILD \
+              -exec dirname {} \; | sed 's#^packages/##' | sort -u); do
+              supports_arch "$1" "packages/$origin/APKBUILD" || continue
+              printf '%s\n' "$origin"
+            done | paste -sd, -
+          }
+          x86_64_publish=false
+          x86_64_origins=
+          aarch64_publish=false
+          aarch64_origins=
+          if [ "$BOOTSTRAP" = true ]; then
+            x86_64_origins=$(all_origins_for_arch x86_64)
+            aarch64_origins=$(all_origins_for_arch aarch64)
+          else
+            for arch in x86_64 aarch64; do
+              marker="https://angribot.github.io/apkbuilds/commits/$arch?run=$GITHUB_RUN_ID"
+              deployed=$(curl --connect-timeout 15 --max-time 60 --retry 3 \
+                --retry-connrefused -fsSL "$marker" || \
+                curl --connect-timeout 15 --max-time 60 --retry 3 \
+                  --retry-connrefused -fsSL \
+                  "https://angribot.github.io/apkbuilds/commit?run=$GITHUB_RUN_ID")
+              [[ "$deployed" =~ ^[0-9a-f]{40}$ ]] || {
+                echo "$arch published commit marker is invalid; use bootstrap only for first publication" >&2
+                exit 1
+              }
+              git merge-base --is-ancestor "$deployed" "$HEAD_SHA" || {
+                echo "$arch published commit is not an ancestor of this release" >&2
+                exit 1
+              }
+              changed=$(git diff --name-only --no-renames "$deployed" "$HEAD_SHA")
+              if printf '%s\n' "$changed" | grep -Fxq 'keys/apkbuilds.rsa.pub'; then
+                echo 'release key changes require a separate key-rotation migration' >&2
+                exit 1
+              fi
+              arch_origins=$(printf '%s\n' "$changed" | python3 scripts/repository.py scope)
+              origin_list=
+              for origin in $(printf '%s\n' "$arch_origins" | jq -r '.[]'); do
+                test -f "packages/$origin/APKBUILD" || {
+                  echo "removing package $origin requires a repository migration" >&2
+                  exit 1
+                }
+                previous="$RUNNER_TEMP/$arch-$origin-APKBUILD"
+                if ! supports_arch "$arch" "packages/$origin/APKBUILD"; then
+                  if git show "$deployed:packages/$origin/APKBUILD" > "$previous" 2>/dev/null &&
+                    supports_arch "$arch" "$previous"; then
+                    echo "$origin no longer supports $arch; repository migration required" >&2
+                    exit 1
+                  fi
+                  continue
+                fi
+                origin_list="${origin_list:+$origin_list,}$origin"
+                if git cat-file -e "$deployed:packages/$origin/APKBUILD" 2>/dev/null; then
+                  git show "$deployed:packages/$origin/APKBUILD" > "$previous"
+                  python3 scripts/repository.py verify-pkgrel \
+                    --previous "$previous" \
+                    --current "packages/$origin/APKBUILD"
+                fi
+              done
+              case "$arch" in
+                x86_64) x86_64_origins=$origin_list ;;
+                aarch64) aarch64_origins=$origin_list ;;
+              esac
             done
           fi
           publish=false
-          gnupg=false
-          zerostack=false
-          if printf '%s\n' "$origins" | grep -Fq '"gnupg"'; then
-            publish=true
-            gnupg=true
-          fi
-          if printf '%s\n' "$origins" | grep -Fq '"zerostack"'; then
-            publish=true
-            zerostack=true
-          fi
+          [ -n "$x86_64_origins" ] && publish=true
+          [ -n "$aarch64_origins" ] && publish=true
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
-          echo "gnupg=$gnupg" >> "$GITHUB_OUTPUT"
-          echo "zerostack=$zerostack" >> "$GITHUB_OUTPUT"
+          [ -n "$x86_64_origins" ] && x86_64_publish=true
+          [ -n "$aarch64_origins" ] && aarch64_publish=true
+          echo "x86_64_publish=$x86_64_publish" >> "$GITHUB_OUTPUT"
+          echo "x86_64_origins=$x86_64_origins" >> "$GITHUB_OUTPUT"
+          echo "aarch64_publish=$aarch64_publish" >> "$GITHUB_OUTPUT"
+          echo "aarch64_origins=$aarch64_origins" >> "$GITHUB_OUTPUT"
 
   build:
     needs: scope
@@ -101,8 +159,12 @@ jobs:
         include:
           - arch: x86_64
             runner: ubuntu-24.04
+            publish_output: x86_64_publish
+            origins_output: x86_64_origins
           - arch: aarch64
             runner: ubuntu-24.04-arm
+            publish_output: aarch64_publish
+            origins_output: aarch64_origins
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -111,14 +173,12 @@ jobs:
           fetch-depth: 0
       - name: Build changed packages with an ephemeral key
         env:
-          BUILD_GNUPG: ${{ needs.scope.outputs.gnupg }}
-          BUILD_ZEROSTACK: ${{ needs.scope.outputs.zerostack }}
+          ORIGINS: ${{ needs.scope.outputs[matrix.origins_output] }}
         run: |
           mkdir -p "$RUNNER_TEMP/repository/packages/${{ matrix.arch }}" "$RUNNER_TEMP/new"
           docker run --rm \
             -e BOOTSTRAP="${{ inputs.bootstrap }}" \
-            -e BUILD_GNUPG \
-            -e BUILD_ZEROSTACK \
+            -e ORIGINS \
             -e REPOSITORY_URL="https://angribot.github.io/apkbuilds/edge/${{ matrix.arch }}" \
             -e TARGET_ARCH="${{ matrix.arch }}" \
             -v "$GITHUB_WORKSPACE:/workspace" \
@@ -126,6 +186,7 @@ jobs:
             -v "$RUNNER_TEMP/new:/new" \
             -w /workspace \
             alpine:edge sh -euxc '
+              [ -n "$ORIGINS" ] || exit 0
               sh /workspace/scripts/prepare-builder.sh /new /repository /workspace
               download() {
                 curl --connect-timeout 15 --max-time 120 --retry 3 \
@@ -139,8 +200,9 @@ jobs:
                 download "$REPOSITORY_URL/APKINDEX.tar.gz" "$previous_index"
                 apk verify "$previous_index"
                 set -- --index "$previous_index"
-                [ "$BUILD_GNUPG" = true ] && set -- "$@" --origin gnupg
-                [ "$BUILD_ZEROSTACK" = true ] && set -- "$@" --origin zerostack
+                for origin in $(printf '%s' "$ORIGINS" | tr ',' ' '); do
+                  set -- "$@" --origin "$origin"
+                done
                 python3 /workspace/scripts/repository.py retained "$@" > /tmp/retained-packages
                 while IFS= read -r package; do
                   download "$REPOSITORY_URL/$package" "$repository/$package"
@@ -153,19 +215,17 @@ jobs:
                     "$repository"/*.apk
                   set -- --previous-index "$previous_index" \
                     --retained-index /tmp/retained-index.tar.gz
-                  [ "$BUILD_GNUPG" = true ] && set -- "$@" --origin gnupg
-                  [ "$BUILD_ZEROSTACK" = true ] && set -- "$@" --origin zerostack
+                  for origin in $(printf '%s' "$ORIGINS" | tr ',' ' '); do
+                    set -- "$@" --origin "$origin"
+                  done
                   python3 /workspace/scripts/repository.py verify-retained "$@"
                 fi
               fi
               su builder -c "abuild-keygen -a -n"
               cp /home/builder/.config/abuild/*.rsa.pub /etc/apk/keys/
-              if [ "$BUILD_GNUPG" = true ]; then
-                su builder -c "cd /workspace/packages/gnupg && REPODEST=/new abuild -r"
-              fi
-              if [ "$BUILD_ZEROSTACK" = true ]; then
-                su builder -c "cd /workspace/packages/zerostack && REPODEST=/new abuild -r"
-              fi
+              for origin in $(printf '%s' "$ORIGINS" | tr ',' ' '); do
+                su builder -c "cd /workspace/packages/$origin && REPODEST=/new abuild -r"
+              done
               new_packages="/new/packages/$TARGET_ARCH"
               test -n "$(find "$new_packages" -name "*.apk" -print -quit)"
               apk verify "$new_packages"/*.apk
@@ -175,8 +235,9 @@ jobs:
                 "$new_packages"/*.apk
               set -- --built-index /tmp/new-index.tar.gz
               [ -n "$previous_index" ] && set -- --previous-index "$previous_index" "$@"
-              [ "$BUILD_GNUPG" = true ] && set -- "$@" --origin gnupg
-              [ "$BUILD_ZEROSTACK" = true ] && set -- "$@" --origin zerostack
+              for origin in $(printf '%s' "$ORIGINS" | tr ',' ' '); do
+                set -- "$@" --origin "$origin"
+              done
               python3 /workspace/scripts/repository.py replacements "$@" > /tmp/replacements
               while IFS="$(printf "\\t")" read -r package new old; do
                 test "$(apk version -t "$new" "$old")" = ">" || {
@@ -195,6 +256,7 @@ jobs:
                 "$repository"/*.apk
             '
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: needs.scope.outputs[matrix.publish_output] == 'true'
         with:
           name: staged-repository-${{ matrix.arch }}
           path: ${{ runner.temp }}/repository/packages/${{ matrix.arch }}/
@@ -204,62 +266,59 @@ jobs:
 
   sign:
     needs: [scope, build]
+    if: >-
+      always() && needs.scope.result == 'success' &&
+      needs.scope.outputs.publish == 'true' &&
+      needs.build.result != 'cancelled'
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: x86_64
             runner: ubuntu-24.04
+            publish_output: x86_64_publish
+            origins_output: x86_64_origins
           - arch: aarch64
             runner: ubuntu-24.04-arm
+            publish_output: aarch64_publish
+            origins_output: aarch64_origins
     runs-on: ${{ matrix.runner }}
     environment: release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.HEAD_SHA }}
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - name: Download staged repository
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: needs.scope.outputs[matrix.publish_output] == 'true'
         with:
           name: staged-repository-${{ matrix.arch }}
           path: ${{ runner.temp }}/repository/${{ matrix.arch }}
-      - name: Read package versions
-        run: |
-          echo "GNUPG_PACKAGE_VERSION=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)-r$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)" >> "$GITHUB_ENV"
-          echo "ZEROSTACK_PACKAGE_VERSION=$(sed -n 's/^pkgver=//p' packages/zerostack/APKBUILD)-r$(sed -n 's/^pkgrel=//p' packages/zerostack/APKBUILD)" >> "$GITHUB_ENV"
       - name: Test staged packages with the repository read-only
+        if: steps.download.outcome == 'success'
         run: |
           docker run --rm \
-            -e GNUPG_PACKAGE_VERSION \
-            -e ZEROSTACK_PACKAGE_VERSION \
-            -e BUILD_GNUPG="${{ needs.scope.outputs.gnupg }}" \
-            -e BUILD_ZEROSTACK="${{ needs.scope.outputs.zerostack }}" \
             -v "$RUNNER_TEMP/repository:/repository:ro" \
-            -v "$GITHUB_WORKSPACE:/workspace:ro" \
             -w /workspace \
             alpine:edge sh -euxc '
-              set -- apk add --allow-untrusted --repository /repository
-              if [ "$BUILD_GNUPG" = true ]; then
-                set -- "$@" "gnupg=$GNUPG_PACKAGE_VERSION"
-              fi
-              if [ "$BUILD_ZEROSTACK" = true ]; then
-                set -- "$@" "zerostack=$ZEROSTACK_PACKAGE_VERSION"
-              fi
+              repository="/repository/${{ matrix.arch }}"
+              set -- apk add --allow-untrusted --repository "$repository"
+              while IFS= read -r filename; do
+                set -- "$@" "$repository/$filename"
+              done < "$repository/new-packages.txt"
               "$@"
-              if [ "$BUILD_GNUPG" = true ]; then
-                scripts/test-package.sh "${GNUPG_PACKAGE_VERSION%-r*}"
-              fi
-              if [ "$BUILD_ZEROSTACK" = true ]; then
-                test "$(zerostack --version)" = \
-                  "zerostack ${ZEROSTACK_PACKAGE_VERSION%-r*}"
-              fi
             '
       - name: Prepare isolated signer
+        if: steps.download.outcome == 'success'
         run: |
           docker build --tag apkbuilds-signer - <<'EOF'
           FROM alpine:edge
           RUN apk add --no-cache abuild
           EOF
       - name: Sign repository without network access
+        if: steps.download.outcome == 'success'
         env:
           ABUILD_PRIVATE_KEY: ${{ secrets.ABUILD_PRIVATE_KEY }}
         run: |
@@ -293,7 +352,6 @@ jobs:
                 )
                 rm -rf "$work"
               done < "$repository/new-packages.txt"
-              rm -f "$repository/new-packages.txt"
               cd "$repository"
               rm -f APKINDEX.tar.gz Packages.adb
               apk index --no-warnings --quiet \
@@ -306,34 +364,24 @@ jobs:
                 APKINDEX.tar.gz
             '
       - name: Verify signed packages without the private key
+        if: steps.download.outcome == 'success'
         run: |
           docker run --rm \
-            -e GNUPG_PACKAGE_VERSION \
-            -e ZEROSTACK_PACKAGE_VERSION \
-            -e BUILD_GNUPG="${{ needs.scope.outputs.gnupg }}" \
-            -e BUILD_ZEROSTACK="${{ needs.scope.outputs.zerostack }}" \
             -v "$RUNNER_TEMP/repository:/repository:ro" \
             -v "$GITHUB_WORKSPACE:/workspace:ro" \
             -w /workspace \
             alpine:edge sh -euxc '
               cp keys/apkbuilds.rsa.pub /etc/apk/keys/
-              set -- apk add --repository /repository
-              if [ "$BUILD_GNUPG" = true ]; then
-                set -- "$@" "gnupg=$GNUPG_PACKAGE_VERSION"
-              fi
-              if [ "$BUILD_ZEROSTACK" = true ]; then
-                set -- "$@" "zerostack=$ZEROSTACK_PACKAGE_VERSION"
-              fi
+              repository="/repository/${{ matrix.arch }}"
+              apk verify "$repository"/*.apk
+              set -- apk add --repository "$repository"
+              while IFS= read -r filename; do
+                set -- "$@" "$repository/$filename"
+              done < "$repository/new-packages.txt"
               "$@"
-              if [ "$BUILD_GNUPG" = true ]; then
-                scripts/test-package.sh "${GNUPG_PACKAGE_VERSION%-r*}"
-              fi
-              if [ "$BUILD_ZEROSTACK" = true ]; then
-                test "$(zerostack --version)" = \
-                  "zerostack ${ZEROSTACK_PACKAGE_VERSION%-r*}"
-              fi
             '
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: steps.download.outcome == 'success'
         with:
           name: repository-${{ matrix.arch }}
           path: ${{ runner.temp }}/repository/${{ matrix.arch }}/
@@ -342,7 +390,11 @@ jobs:
           compression-level: 0
 
   publish:
-    needs: sign
+    needs: [scope, sign]
+    if: >-
+      always() && needs.scope.result == 'success' &&
+      needs.scope.outputs.publish == 'true' &&
+      needs.sign.result != 'cancelled' && needs.sign.result != 'skipped'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -360,18 +412,65 @@ jobs:
           pattern: repository-*
           path: public
       - name: Assemble and verify repository
+        env:
+          HEAD_SHA: ${{ env.HEAD_SHA }}
+          X86_ORIGINS: ${{ needs.scope.outputs.x86_64_origins }}
+          AARCH_ORIGINS: ${{ needs.scope.outputs.aarch64_origins }}
         run: |
-          mkdir public/edge
-          mv public/repository-x86_64 public/edge/x86_64
-          mv public/repository-aarch64 public/edge/aarch64
+          mkdir -p public/edge public/commits "public/status/$GITHUB_RUN_ID"
+          published=false
+          for arch in x86_64 aarch64; do
+            if [ -d "public/repository-$arch" ]; then
+              published=true
+              mv "public/repository-$arch" "public/edge/$arch"
+              printf '%s\n' "$HEAD_SHA" > "public/commits/$arch"
+              printf '%s\n' published > "public/status/$GITHUB_RUN_ID/$arch"
+              continue
+            fi
+            case "$arch" in
+              x86_64) arch_origins=$X86_ORIGINS ;;
+              aarch64) arch_origins=$AARCH_ORIGINS ;;
+            esac
+            marker="https://angribot.github.io/apkbuilds/commits/$arch?run=$GITHUB_RUN_ID"
+            deployed=$(curl --connect-timeout 15 --max-time 60 --retry 3 \
+              --retry-connrefused -fsSL "$marker" || \
+              curl --connect-timeout 15 --max-time 60 --retry 3 \
+                --retry-connrefused -fsSL \
+                "https://angribot.github.io/apkbuilds/commit?run=$GITHUB_RUN_ID")
+            [[ "$deployed" =~ ^[0-9a-f]{40}$ ]]
+            mkdir "public/edge/$arch"
+            repository="https://angribot.github.io/apkbuilds/edge/$arch"
+            curl --connect-timeout 15 --max-time 120 --retry 3 \
+              --retry-connrefused -fsSL "$repository/APKINDEX.tar.gz" \
+              -o "public/edge/$arch/APKINDEX.tar.gz"
+            python3 scripts/repository.py filenames \
+              --index "public/edge/$arch/APKINDEX.tar.gz" |
+              while IFS= read -r package; do
+                curl --connect-timeout 15 --max-time 120 --retry 3 \
+                  --retry-connrefused -fsSL "$repository/$package" \
+                  -o "public/edge/$arch/$package"
+              done
+            marker_commit=$deployed
+            [ -n "$arch_origins" ] || marker_commit=$HEAD_SHA
+            printf '%s\n' "$marker_commit" > "public/commits/$arch"
+            printf '%s\n' retained > "public/status/$GITHUB_RUN_ID/$arch"
+          done
+          test "$published" = true
+          rm -f public/edge/x86_64/new-packages.txt public/edge/aarch64/new-packages.txt
           cp keys/apkbuilds.rsa.pub public/
-          printf '%s\n' '${{ env.HEAD_SHA }}' > public/commit
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/public:/repository:ro" \
+            -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/etc/apk/keys/apkbuilds.rsa.pub:ro" \
+            alpine:edge sh -ec '
+              for arch in x86_64 aarch64; do
+                apk verify "/repository/edge/$arch/APKINDEX.tar.gz"
+                apk verify /repository/edge/"$arch"/*.apk
+              done
+            '
           test -s public/edge/x86_64/APKINDEX.tar.gz
           test -s public/edge/aarch64/APKINDEX.tar.gz
-          test -n "$(find public/edge/x86_64 -name 'gnupg-*.apk' -print -quit)"
-          test -n "$(find public/edge/aarch64 -name 'gnupg-*.apk' -print -quit)"
-          test -n "$(find public/edge/x86_64 -name 'zerostack-*.apk' -print -quit)"
-          test -n "$(find public/edge/aarch64 -name 'zerostack-*.apk' -print -quit)"
+          test -n "$(find public/edge/x86_64 -name '*.apk' -print -quit)"
+          test -n "$(find public/edge/aarch64 -name '*.apk' -print -quit)"
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: public
@@ -387,8 +486,10 @@ jobs:
         include:
           - arch: x86_64
             runner: ubuntu-24.04
+            origins_output: x86_64_origins
           - arch: aarch64
             runner: ubuntu-24.04-arm
+            origins_output: aarch64_origins
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -396,15 +497,8 @@ jobs:
           ref: ${{ env.HEAD_SHA }}
       - name: Test changed package exact-version installation from Pages
         run: |
-          gnupg_version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
-          gnupg_revision=$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)
-          zerostack_version=$(sed -n 's/^pkgver=//p' packages/zerostack/APKBUILD)
-          zerostack_revision=$(sed -n 's/^pkgrel=//p' packages/zerostack/APKBUILD)
           docker run --rm \
-            -e GNUPG_PACKAGE_VERSION="$gnupg_version-r$gnupg_revision" \
-            -e ZEROSTACK_PACKAGE_VERSION="$zerostack_version-r$zerostack_revision" \
-            -e BUILD_GNUPG="${{ needs.scope.outputs.gnupg }}" \
-            -e BUILD_ZEROSTACK="${{ needs.scope.outputs.zerostack }}" \
+            -e ORIGINS="${{ needs.scope.outputs[matrix.origins_output] }}" \
             -e PUBLISHED_SHA="${{ env.HEAD_SHA }}" \
             -e RUN_ID="${{ github.run_id }}" \
             -v "$GITHUB_WORKSPACE:/workspace" \
@@ -412,32 +506,33 @@ jobs:
             alpine:edge sh -euxc '
               wget -q -T 15 -t 4 https://angribot.github.io/apkbuilds/apkbuilds.rsa.pub -O /etc/apk/keys/apkbuilds.rsa.pub
               echo "https://angribot.github.io/apkbuilds/edge" >> /etc/apk/repositories
-              ready=false
+              status=
               for delay in 0 5 10 20 40 60; do
                 sleep "$delay"
-                if [ "$(wget -q -T 15 -t 4 -O- "https://angribot.github.io/apkbuilds/commit?run=$RUN_ID")" = "$PUBLISHED_SHA" ]; then
-                  ready=true
-                  break
-                fi
+                status=$(wget -q -T 15 -t 4 -O- \
+                  "https://angribot.github.io/apkbuilds/status/$RUN_ID/${{ matrix.arch }}" || true)
+                [ "$status" = published ] || [ "$status" = retained ] && break
               done
-              test "$ready" = true
+              case "$status" in
+                retained)
+                  echo "${{ matrix.arch }} retained after build failure"
+                  exit 0
+                  ;;
+                published) ;;
+                *) exit 1 ;;
+              esac
+              published=$(wget -q -T 15 -t 4 -O- \
+                "https://angribot.github.io/apkbuilds/commits/${{ matrix.arch }}?run=$RUN_ID")
+              test "$published" = "$PUBLISHED_SHA"
+              [ -n "$ORIGINS" ] || exit 0
               apk update
               set -- apk add
-              if [ "$BUILD_GNUPG" = true ]; then
-                set -- "$@" "gnupg=$GNUPG_PACKAGE_VERSION"
-              fi
-              if [ "$BUILD_ZEROSTACK" = true ]; then
-                set -- "$@" "zerostack=$ZEROSTACK_PACKAGE_VERSION"
-              fi
+              for origin in $(printf '%s' "$ORIGINS" | tr ',' ' '); do
+                apkbuild="/workspace/packages/$origin/APKBUILD"
+                name=$(sed -n 's/^pkgname=//p' "$apkbuild")
+                version=$(sed -n 's/^pkgver=//p' "$apkbuild")
+                revision=$(sed -n 's/^pkgrel=//p' "$apkbuild")
+                set -- "$@" "$name=$version-r$revision"
+              done
               "$@"
-              if [ "$BUILD_GNUPG" = true ]; then
-                apk info -e "gpg=$GNUPG_PACKAGE_VERSION"
-                apk info -e "gnupg=$GNUPG_PACKAGE_VERSION"
-                scripts/test-package.sh "${GNUPG_PACKAGE_VERSION%-r*}"
-              fi
-              if [ "$BUILD_ZEROSTACK" = true ]; then
-                apk info -e "zerostack=$ZEROSTACK_PACKAGE_VERSION"
-                test "$(zerostack --version)" = \
-                  "zerostack ${ZEROSTACK_PACKAGE_VERSION%-r*}"
-              fi
             '

@@ -34,9 +34,14 @@ class RepositoryTest(unittest.TestCase):
     def test_scope_selects_changed_source_packages(self):
         self.assertEqual(
             repository.package_origins(
-                (path for path in ["README.md", "packages/zerostack/APKBUILD", "packages/gnupg/fix-i18n.patch"])
+                (path for path in [
+                    "README.md",
+                    "packages/zerostack/APKBUILD",
+                    "packages/gnupg/fix-i18n.patch",
+                    "packages/new-package/APKBUILD",
+                ])
             ),
-            ["gnupg", "zerostack"],
+            ["gnupg", "new-package", "zerostack"],
         )
 
     def test_verify_pkgrel_requires_reset_for_upstream_updates_and_increment_for_rebuilds(self):
