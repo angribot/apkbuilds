@@ -193,10 +193,10 @@ jobs:
           ORIGINS: ${{ needs.scope.outputs[matrix.origins_output] }}
           BUILD_ALLOWED: ${{ needs.scope.outputs[matrix.publish_output] }}
         run: |
-          [ "$BUILD_ALLOWED" = true ] || exit 0
           mkdir -p "$RUNNER_TEMP/repository/packages/${{ matrix.arch }}" "$RUNNER_TEMP/new"
           docker run --rm \
             -e BOOTSTRAP="${{ inputs.bootstrap }}" \
+            -e BUILD_ALLOWED \
             -e ORIGINS \
             -e REPOSITORY_URL="https://angribot.github.io/apkbuilds/edge/${{ matrix.arch }}" \
             -e TARGET_ARCH="${{ matrix.arch }}" \
@@ -240,6 +240,7 @@ jobs:
                   python3 /workspace/scripts/repository.py verify-retained "$@"
                 fi
               fi
+              [ "$BUILD_ALLOWED" = true ] || exit 0
               su builder -c "abuild-keygen -a -n"
               cp /home/builder/.config/abuild/*.rsa.pub /etc/apk/keys/
               for origin in $(printf %s "$ORIGINS" | tr , \ ); do
