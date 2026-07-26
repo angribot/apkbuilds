@@ -477,6 +477,7 @@ jobs:
           done
           test "$published" = true
           rm -f public/edge/x86_64/new-packages.txt public/edge/aarch64/new-packages.txt
+          cp keys/apkbuilds.rsa.pub public/
           test -s public/edge/x86_64/APKINDEX.tar.gz
           test -s public/edge/aarch64/APKINDEX.tar.gz
           test -n "$(find public/edge/x86_64 -name '*.apk' -print -quit)"
