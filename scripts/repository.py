@@ -7,10 +7,7 @@ import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 
-PACKAGE_PATHS = {
-    "gnupg": "packages/gnupg/",
-    "zerostack": "packages/zerostack/",
-}
+PACKAGE_ROOT = "packages/"
 
 
 @dataclass(frozen=True)
@@ -26,12 +23,12 @@ class Package:
 
 
 def package_origins(paths):
-    paths = list(paths)
-    return sorted(
-        origin
-        for origin, directory in PACKAGE_PATHS.items()
-        if any(path.startswith(directory) for path in paths)
-    )
+    origins = set()
+    for path in paths:
+        parts = path.split("/", 2)
+        if len(parts) > 1 and parts[0] == PACKAGE_ROOT.rstrip("/") and parts[1]:
+            origins.add(parts[1])
+    return sorted(origins)
 
 
 def apkbuild_release(path):
@@ -140,9 +137,8 @@ def replacements(previous, built, origins):
 
 def parse_origins(values):
     origins = set(values)
-    unknown = sorted(origins - set(PACKAGE_PATHS))
-    if unknown:
-        raise ValueError(f"unknown package origins: {unknown}")
+    for origin in origins:
+        component(origin, "package origin")
     if not origins:
         raise ValueError("no package origins selected")
     return origins
@@ -156,6 +152,11 @@ def command_retained(args):
     origins = parse_origins(args.origin)
     packages = retained_packages(read_index(args.index), origins)
     for package in sorted(packages.values(), key=lambda item: item.filename):
+        print(package.filename)
+
+
+def command_filenames(args):
+    for package in sorted(read_index(args.index).values(), key=lambda item: item.filename):
         print(package.filename)
 
 
@@ -184,6 +185,10 @@ def main():
     retained.add_argument("--index", type=Path, required=True)
     retained.add_argument("--origin", action="append", default=[])
     retained.set_defaults(handler=command_retained)
+
+    filenames = commands.add_parser("filenames")
+    filenames.add_argument("--index", type=Path, required=True)
+    filenames.set_defaults(handler=command_filenames)
 
     verify = commands.add_parser("verify-retained")
     verify.add_argument("--previous-index", type=Path, required=True)

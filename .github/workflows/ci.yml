@@ -25,10 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.scope.outputs.build }}
-      gnupg: ${{ steps.scope.outputs.gnupg }}
-      zerostack: ${{ steps.scope.outputs.zerostack }}
-      package_gnupg: ${{ steps.scope.outputs.package_gnupg }}
-      package_zerostack: ${{ steps.scope.outputs.package_zerostack }}
+      origins: ${{ steps.scope.outputs.origins }}
+      package_origins: ${{ steps.scope.outputs.package_origins }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -44,13 +42,15 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
           BUILD_REQUESTED: ${{ inputs.build }}
         run: |
+          all_origins() {
+            find packages -mindepth 2 -maxdepth 2 -name APKBUILD \
+              -exec dirname {} \; | sed 's#^packages/##' | sort -u | paste -sd, -
+          }
           files=
           version_base=
           build=false
-          gnupg=false
-          zerostack=false
-          package_gnupg=false
-          package_zerostack=false
+          origins=
+          package_origins=
           case "$GITHUB_EVENT_NAME" in
             pull_request)
               version_base=$PR_BASE_SHA
@@ -66,68 +66,52 @@ jobs:
               ;;
             workflow_dispatch)
               case "$GITHUB_REF_NAME" in
-                update/gnupg-*|update/zerostack-*)
+                update/*)
                   version_base="origin/$DEFAULT_BRANCH"
                   files=$(git diff --name-only --no-renames \
                     "$version_base...$GITHUB_SHA")
                   ;;
                 *)
-                  if [ "$BUILD_REQUESTED" != false ]; then
-                    gnupg=true
-                    zerostack=true
-                  fi
+                  [ "$BUILD_REQUESTED" = false ] || origins=$(all_origins)
                   ;;
               esac
               ;;
           esac
           if [ -n "$files" ]; then
-            origins=$(printf '%s\n' "$files" | python3 scripts/repository.py scope)
-            if printf '%s\n' "$origins" | grep -Fq '"gnupg"'; then
-              gnupg=true
-              package_gnupg=true
-            fi
-            if printf '%s\n' "$origins" | grep -Fq '"zerostack"'; then
-              zerostack=true
-              package_zerostack=true
-            fi
-            if printf '%s\n' "$files" | grep -Eq '^scripts/test-package\.sh$'; then
-              gnupg=true
-            fi
-            if printf '%s\n' "$files" | grep -Eq '^scripts/prepare-builder\.sh$'; then
-              gnupg=true
-              zerostack=true
+            origins=$(printf '%s\n' "$files" | python3 scripts/repository.py scope | jq -r '.[]' | paste -sd, -)
+            if printf '%s\n' "$files" | grep -Eq '^scripts/(prepare-builder|test-package)\.sh$'; then
+              origins=$(all_origins)
             fi
           fi
-          if [ "$gnupg" = true ] || [ "$zerostack" = true ]; then
+          if [ -n "$origins" ]; then
             build=true
+            for origin in $(printf '%s' "$origins" | tr ',' ' '); do
+              if printf '%s\n' "$files" | grep -Eq "^packages/$origin/"; then
+                package_origins="${package_origins:+$package_origins,}$origin"
+              fi
+            done
+          else
+            build=false
           fi
           echo "build=$build" >> "$GITHUB_OUTPUT"
-          echo "gnupg=$gnupg" >> "$GITHUB_OUTPUT"
-          echo "zerostack=$zerostack" >> "$GITHUB_OUTPUT"
-          echo "package_gnupg=$package_gnupg" >> "$GITHUB_OUTPUT"
-          echo "package_zerostack=$package_zerostack" >> "$GITHUB_OUTPUT"
+          echo "origins=$origins" >> "$GITHUB_OUTPUT"
+          echo "package_origins=$package_origins" >> "$GITHUB_OUTPUT"
           echo "version_base=$version_base" >> "$GITHUB_OUTPUT"
       - name: Enforce package version semantics
-        if: >-
-          steps.scope.outputs.package_gnupg == 'true' ||
-          steps.scope.outputs.package_zerostack == 'true'
+        if: steps.scope.outputs.package_origins != ''
         env:
           VERSION_BASE: ${{ steps.scope.outputs.version_base }}
-          PACKAGE_GNUPG: ${{ steps.scope.outputs.package_gnupg }}
-          PACKAGE_ZEROSTACK: ${{ steps.scope.outputs.package_zerostack }}
+          PACKAGE_ORIGINS: ${{ steps.scope.outputs.package_origins }}
         run: |
           test -n "$VERSION_BASE"
-          for origin in gnupg zerostack; do
-            case "$origin" in
-              gnupg) selected=$PACKAGE_GNUPG ;;
-              zerostack) selected=$PACKAGE_ZEROSTACK ;;
-            esac
-            [ "$selected" = true ] || continue
+          for origin in $(printf '%s' "$PACKAGE_ORIGINS" | tr ',' ' '); do
             previous="$RUNNER_TEMP/$origin-APKBUILD"
-            git show "$VERSION_BASE:packages/$origin/APKBUILD" > "$previous"
-            python3 scripts/repository.py verify-pkgrel \
-              --previous "$previous" \
-              --current "packages/$origin/APKBUILD"
+            if git cat-file -e "$VERSION_BASE:packages/$origin/APKBUILD" 2>/dev/null; then
+              git show "$VERSION_BASE:packages/$origin/APKBUILD" > "$previous"
+              python3 scripts/repository.py verify-pkgrel \
+                --previous "$previous" \
+                --current "packages/$origin/APKBUILD"
+            fi
           done
 
   build:
@@ -158,19 +142,31 @@ jobs:
           sh scripts/prepare-builder.sh "$GITHUB_WORKSPACE"
           su builder -c 'abuild-keygen -a -n'
           cp /home/builder/.config/abuild/*.rsa.pub /etc/apk/keys/
-      - name: Build GnuPG
-        if: needs.test-updater.outputs.gnupg == 'true'
-        run: su builder -c "cd '$GITHUB_WORKSPACE/packages/gnupg' && abuild -r"
-      - name: Build zerostack
-        if: needs.test-updater.outputs.zerostack == 'true'
-        run: su builder -c "cd '$GITHUB_WORKSPACE/packages/zerostack' && abuild -r"
-      - name: Verify replacement versions
-        if: >-
-          needs.test-updater.outputs.package_gnupg == 'true' ||
-          needs.test-updater.outputs.package_zerostack == 'true'
+      - name: Build changed packages
         env:
-          PACKAGE_GNUPG: ${{ needs.test-updater.outputs.package_gnupg }}
-          PACKAGE_ZEROSTACK: ${{ needs.test-updater.outputs.package_zerostack }}
+          ORIGINS: ${{ needs.test-updater.outputs.origins }}
+        run: |
+          supports_arch() {
+            declared=$(sed -n 's/^arch="\(.*\)"$/\1/p' "packages/$2/APKBUILD")
+            [ -z "$declared" ] && return 0
+            case " $declared " in
+              *" !$1 "*) return 1 ;;
+              *" all "*|*" noarch "*|*" $1 "*) return 0 ;;
+            esac
+            return 1
+          }
+          for origin in $(printf '%s' "$ORIGINS" | tr ',' ' '); do
+            test -f "packages/$origin/APKBUILD" || {
+              echo "removing package $origin requires a repository migration" >&2
+              exit 1
+            }
+            supports_arch "${{ matrix.arch }}" "$origin" || continue
+            su builder -c "cd '$GITHUB_WORKSPACE/packages/$origin' && abuild -r"
+          done
+      - name: Verify replacement versions
+        if: needs.test-updater.outputs.package_origins != ''
+        env:
+          PACKAGE_ORIGINS: ${{ needs.test-updater.outputs.package_origins }}
         run: |
           cp keys/apkbuilds.rsa.pub /etc/apk/keys/
           previous=/tmp/previous-index.tar.gz
@@ -184,9 +180,23 @@ jobs:
             --output /tmp/new-index.tar.gz \
             --rewrite-arch "${{ matrix.arch }}" \
             /tmp/new-packages/*.apk
+          supports_arch() {
+            declared=$(sed -n 's/^arch="\(.*\)"$/\1/p' "packages/$2/APKBUILD")
+            [ -z "$declared" ] && return 0
+            case " $declared " in
+              *" !$1 "*) return 1 ;;
+              *" all "*|*" noarch "*|*" $1 "*) return 0 ;;
+            esac
+            return 1
+          }
           set -- --previous-index "$previous" --built-index /tmp/new-index.tar.gz
-          [ "$PACKAGE_GNUPG" = true ] && set -- "$@" --origin gnupg
-          [ "$PACKAGE_ZEROSTACK" = true ] && set -- "$@" --origin zerostack
+          selected=false
+          for origin in $(printf '%s' "$PACKAGE_ORIGINS" | tr ',' ' '); do
+            supports_arch "${{ matrix.arch }}" "$origin" || continue
+            selected=true
+            set -- "$@" --origin "$origin"
+          done
+          [ "$selected" = true ] || exit 0
           python3 scripts/repository.py replacements "$@" > /tmp/replacements
           while IFS="$(printf '\t')" read -r package new old; do
             test "$(apk version -t "$new" "$old")" = ">" || {
@@ -194,19 +204,29 @@ jobs:
               exit 1
             }
           done < /tmp/replacements
-      - name: Install and test GnuPG
-        if: needs.test-updater.outputs.gnupg == 'true'
+      - name: Install changed packages
+        if: needs.test-updater.outputs.origins != ''
+        env:
+          ORIGINS: ${{ needs.test-updater.outputs.origins }}
         run: |
           repository=/home/builder/.local/share/abuild/packages
-          version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
-          revision=$(sed -n 's/^pkgrel=//p' packages/gnupg/APKBUILD)
-          apk add --repository "$repository" "gnupg=$version-r$revision"
-          scripts/test-package.sh "$version"
-      - name: Install and test zerostack
-        if: needs.test-updater.outputs.zerostack == 'true'
-        run: |
-          repository=/home/builder/.local/share/abuild/packages
-          version=$(sed -n 's/^pkgver=//p' packages/zerostack/APKBUILD)
-          revision=$(sed -n 's/^pkgrel=//p' packages/zerostack/APKBUILD)
-          apk add --repository "$repository" "zerostack=$version-r$revision"
-          test "$(zerostack --version)" = "zerostack $version"
+          mkdir /tmp/install-packages
+          find "$repository" -type f -name '*.apk' -exec cp {} /tmp/install-packages/ \;
+          test -n "$(find /tmp/install-packages -name '*.apk' -print -quit)" || exit 0
+          set -- apk add --repository "$repository"
+          for package in /tmp/install-packages/*.apk; do
+            set -- "$@" "$package"
+          done
+          "$@"
+          case ",${ORIGINS}," in
+            *,gnupg,*)
+              version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
+              scripts/test-package.sh "$version"
+              ;;
+          esac
+          case ",${ORIGINS}," in
+            *,zerostack,*)
+              version=$(sed -n 's/^pkgver=//p' packages/zerostack/APKBUILD)
+              test "$(zerostack --version)" = "zerostack $version"
+              ;;
+          esac

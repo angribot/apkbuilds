@@ -4,7 +4,8 @@ Signed GnuPG and zerostack packages automatically tracking stable upstream
 releases for Alpine Linux edge. GnuPG is built from source; zerostack uses
 upstream's static musl binaries.
 
-Supported architectures: `x86_64` and `aarch64`.
+Supported architectures: `x86_64` and `aarch64`. They may temporarily expose
+different package versions when one architecture build fails.
 
 ## Add the repository
 
