@@ -477,6 +477,7 @@ jobs:
           test "$published" = true
           rm -f public/edge/x86_64/new-packages.txt public/edge/aarch64/new-packages.txt
           cp keys/apkbuilds.rsa.pub public/
+          docker run --rm alpine:edge sh -ec 'echo verifier-started'
           docker run --rm \
             -v "$GITHUB_WORKSPACE/public:/repository:ro" \
             -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/etc/apk/keys/apkbuilds.rsa.pub:ro" \
