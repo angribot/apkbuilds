@@ -392,6 +392,7 @@ jobs:
             alpine:edge sh -euxc '
               cp keys/apkbuilds.rsa.pub /etc/apk/keys/
               repository="/repository/${{ matrix.arch }}"
+              apk verify "$repository/APKINDEX.tar.gz"
               apk verify "$repository"/*.apk
               set -- apk add --repository "$repository"
               while IFS= read -r filename; do
@@ -476,22 +477,6 @@ jobs:
           done
           test "$published" = true
           rm -f public/edge/x86_64/new-packages.txt public/edge/aarch64/new-packages.txt
-          cp keys/apkbuilds.rsa.pub public/
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/public:/repository:ro" \
-            -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/etc/apk/keys/apkbuilds.rsa.pub:ro" \
-            alpine:edge sh -ec '
-              echo verifier-started
-              for arch in x86_64 aarch64; do
-                index="/repository/edge/$arch/APKINDEX.tar.gz"
-                echo "Verifying $index"
-                apk verify "$index"
-                for package in /repository/edge/"$arch"/*.apk; do
-                  echo "Verifying $package"
-                  apk verify "$package"
-                done
-              done
-            '
           test -s public/edge/x86_64/APKINDEX.tar.gz
           test -s public/edge/aarch64/APKINDEX.tar.gz
           test -n "$(find public/edge/x86_64 -name '*.apk' -print -quit)"
