@@ -482,8 +482,13 @@ jobs:
             -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/etc/apk/keys/apkbuilds.rsa.pub:ro" \
             alpine:edge sh -ec '
               for arch in x86_64 aarch64; do
-                apk verify "/repository/edge/$arch/APKINDEX.tar.gz"
-                apk verify /repository/edge/"$arch"/*.apk
+                index="/repository/edge/$arch/APKINDEX.tar.gz"
+                echo "Verifying $index"
+                apk verify "$index"
+                for package in /repository/edge/"$arch"/*.apk; do
+                  echo "Verifying $package"
+                  apk verify "$package"
+                done
               done
             '
           test -s public/edge/x86_64/APKINDEX.tar.gz
