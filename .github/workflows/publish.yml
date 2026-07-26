@@ -68,9 +68,9 @@ jobs:
             else
               x86_64_build_allowed=false
               aarch64_build_allowed=false
-              printf '%s\n' "$build_jobs" | grep -Eq '^build \(x86_64,.*\tsuccess$' &&
+              printf '%s\n' "$build_jobs" | grep -Eq $'^build \\(x86_64,.*\tsuccess$' &&
                 x86_64_build_allowed=true
-              printf '%s\n' "$build_jobs" | grep -Eq '^build \(aarch64,.*\tsuccess$' &&
+              printf '%s\n' "$build_jobs" | grep -Eq $'^build \\(aarch64,.*\tsuccess$' &&
                 aarch64_build_allowed=true
               if [ "$x86_64_build_allowed" = false ] && [ "$aarch64_build_allowed" = false ]; then
                 echo 'all architecture builds failed' >&2
