@@ -200,7 +200,7 @@ jobs:
                 download "$REPOSITORY_URL/APKINDEX.tar.gz" "$previous_index"
                 apk verify "$previous_index"
                 set -- --index "$previous_index"
-                for origin in $(printf '%s' "$ORIGINS" | tr ',' ' '); do
+                for origin in $(printf %s "$ORIGINS" | tr , \ ); do
                   set -- "$@" --origin "$origin"
                 done
                 python3 /workspace/scripts/repository.py retained "$@" > /tmp/retained-packages
@@ -215,7 +215,7 @@ jobs:
                     "$repository"/*.apk
                   set -- --previous-index "$previous_index" \
                     --retained-index /tmp/retained-index.tar.gz
-                  for origin in $(printf '%s' "$ORIGINS" | tr ',' ' '); do
+                  for origin in $(printf %s "$ORIGINS" | tr , \ ); do
                     set -- "$@" --origin "$origin"
                   done
                   python3 /workspace/scripts/repository.py verify-retained "$@"
@@ -223,7 +223,7 @@ jobs:
               fi
               su builder -c "abuild-keygen -a -n"
               cp /home/builder/.config/abuild/*.rsa.pub /etc/apk/keys/
-              for origin in $(printf '%s' "$ORIGINS" | tr ',' ' '); do
+              for origin in $(printf %s "$ORIGINS" | tr , \ ); do
                 su builder -c "cd /workspace/packages/$origin && REPODEST=/new abuild -r"
               done
               new_packages="/new/packages/$TARGET_ARCH"
@@ -235,7 +235,7 @@ jobs:
                 "$new_packages"/*.apk
               set -- --built-index /tmp/new-index.tar.gz
               [ -n "$previous_index" ] && set -- --previous-index "$previous_index" "$@"
-              for origin in $(printf '%s' "$ORIGINS" | tr ',' ' '); do
+              for origin in $(printf %s "$ORIGINS" | tr , \ ); do
                 set -- "$@" --origin "$origin"
               done
               python3 /workspace/scripts/repository.py replacements "$@" > /tmp/replacements
@@ -527,7 +527,7 @@ jobs:
               [ -n "$ORIGINS" ] || exit 0
               apk update
               set -- apk add
-              for origin in $(printf '%s' "$ORIGINS" | tr ',' ' '); do
+              for origin in $(printf %s "$ORIGINS" | tr , \ ); do
                 apkbuild="/workspace/packages/$origin/APKBUILD"
                 name=$(sed -n 's/^pkgname=//p' "$apkbuild")
                 version=$(sed -n 's/^pkgver=//p' "$apkbuild")
