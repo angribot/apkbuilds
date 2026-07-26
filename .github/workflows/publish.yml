@@ -480,7 +480,7 @@ jobs:
           docker run --rm \
             -v "$GITHUB_WORKSPACE/public:/repository:ro" \
             -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/etc/apk/keys/apkbuilds.rsa.pub:ro" \
-            alpine:edge sh -euxc '
+            alpine:edge sh -exc '
               for arch in x86_64 aarch64; do
                 index="/repository/edge/$arch/APKINDEX.tar.gz"
                 echo "Verifying $index"
