@@ -217,7 +217,7 @@ jobs:
                 cp /workspace/keys/apkbuilds.rsa.pub /etc/apk/keys/
                 download "$REPOSITORY_URL/APKINDEX.tar.gz" "$previous_index"
                 apk verify "$previous_index"
-                if [ -n "$ORIGINS" ]; then
+                if [ "$BUILD_ALLOWED" = true ] && [ -n "$ORIGINS" ]; then
                   set -- --index "$previous_index"
                   for origin in $(printf %s "$ORIGINS" | tr , \ ); do
                     set -- "$@" --origin "$origin"
@@ -236,7 +236,7 @@ jobs:
                     --output /tmp/retained-index.tar.gz \
                     --rewrite-arch "$TARGET_ARCH" \
                     "$repository"/*.apk
-                  if [ -n "$ORIGINS" ]; then
+                  if [ "$BUILD_ALLOWED" = true ] && [ -n "$ORIGINS" ]; then
                     set -- --previous-index "$previous_index" \
                       --retained-index /tmp/retained-index.tar.gz
                     for origin in $(printf %s "$ORIGINS" | tr , \ ); do
