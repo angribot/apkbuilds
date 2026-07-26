@@ -193,7 +193,8 @@ jobs:
           ORIGINS: ${{ needs.scope.outputs[matrix.origins_output] }}
           BUILD_ALLOWED: ${{ needs.scope.outputs[matrix.publish_output] }}
         run: |
-          mkdir -p "$RUNNER_TEMP/repository/packages/${{ matrix.arch }}" "$RUNNER_TEMP/new"
+          mkdir -p "$RUNNER_TEMP/repository/packages/${{ matrix.arch }}" \
+            "$RUNNER_TEMP/new" "$RUNNER_TEMP/verified"
           docker run --rm \
             -e BOOTSTRAP="${{ inputs.bootstrap }}" \
             -e BUILD_ALLOWED \
@@ -203,6 +204,7 @@ jobs:
             -v "$GITHUB_WORKSPACE:/workspace" \
             -v "$RUNNER_TEMP/repository:/repository" \
             -v "$RUNNER_TEMP/new:/new" \
+            -v "$RUNNER_TEMP/verified:/verified" \
             -w /workspace \
             alpine:edge sh -euxc '
               sh /workspace/scripts/prepare-builder.sh /new /repository /workspace
@@ -217,6 +219,14 @@ jobs:
                 cp /workspace/keys/apkbuilds.rsa.pub /etc/apk/keys/
                 download "$REPOSITORY_URL/APKINDEX.tar.gz" "$previous_index"
                 apk verify "$previous_index"
+                mkdir /tmp/previous-packages
+                python3 /workspace/scripts/repository.py filenames \
+                  --index "$previous_index" > /tmp/previous-packages.txt
+                while IFS= read -r package; do
+                  download "$REPOSITORY_URL/$package" "/tmp/previous-packages/$package"
+                done < /tmp/previous-packages.txt
+                apk verify /tmp/previous-packages/*.apk
+                touch "/verified/$TARGET_ARCH"
                 if [ "$BUILD_ALLOWED" = true ] && [ -n "$ORIGINS" ]; then
                   set -- --index "$previous_index"
                   for origin in $(printf %s "$ORIGINS" | tr , \ ); do
@@ -224,11 +234,10 @@ jobs:
                   done
                   python3 /workspace/scripts/repository.py retained "$@" > /tmp/retained-packages
                 else
-                  python3 /workspace/scripts/repository.py filenames \
-                    --index "$previous_index" > /tmp/retained-packages
+                  cp /tmp/previous-packages.txt /tmp/retained-packages
                 fi
                 while IFS= read -r package; do
-                  download "$REPOSITORY_URL/$package" "$repository/$package"
+                  cp "/tmp/previous-packages/$package" "$repository/$package"
                 done < /tmp/retained-packages
                 if [ -s /tmp/retained-packages ]; then
                   apk verify "$repository"/*.apk
@@ -281,6 +290,14 @@ jobs:
                 --rewrite-arch "$TARGET_ARCH" \
                 "$repository"/*.apk
             '
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: repository-verified-${{ matrix.arch }}
+          path: ${{ runner.temp }}/verified/${{ matrix.arch }}
+          if-no-files-found: ignore
+          retention-days: 1
+          compression-level: 0
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: needs.scope.outputs[matrix.publish_output] == 'true'
         with:
@@ -454,6 +471,7 @@ jobs:
               printf '%s\n' published > "public/status/$GITHUB_RUN_ID/$arch"
               continue
             fi
+            test -d "public/repository-verified-$arch"
             case "$arch" in
               x86_64) arch_origins=$X86_ORIGINS ;;
               aarch64) arch_origins=$AARCH_ORIGINS ;;
@@ -483,6 +501,7 @@ jobs:
             printf '%s\n' retained > "public/status/$GITHUB_RUN_ID/$arch"
           done
           test "$published" = true
+          rm -rf public/repository-verified-x86_64 public/repository-verified-aarch64
           rm -f public/edge/x86_64/new-packages.txt public/edge/aarch64/new-packages.txt
           cp keys/apkbuilds.rsa.pub public/
           test -s public/edge/x86_64/APKINDEX.tar.gz
