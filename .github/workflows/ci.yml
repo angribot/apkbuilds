@@ -12,6 +12,10 @@ on:
         description: Build packages
         type: boolean
         default: true
+      origins:
+        description: Comma-separated package origins to build
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -41,6 +45,7 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
           BUILD_REQUESTED: ${{ inputs.build }}
+          BUILD_ORIGINS: ${{ inputs.origins }}
         run: |
           all_origins() {
             find packages -mindepth 2 -maxdepth 2 -name APKBUILD \
@@ -72,7 +77,11 @@ jobs:
                     "$version_base...$GITHUB_SHA")
                   ;;
                 *)
-                  [ "$BUILD_REQUESTED" = false ] || origins=$(all_origins)
+                  if [ -n "$BUILD_ORIGINS" ]; then
+                    origins=$BUILD_ORIGINS
+                  elif [ "$BUILD_REQUESTED" != false ]; then
+                    origins=$(all_origins)
+                  fi
                   ;;
               esac
               ;;
@@ -86,6 +95,14 @@ jobs:
           if [ -n "$origins" ]; then
             build=true
             for origin in $(printf '%s' "$origins" | tr ',' ' '); do
+              printf '%s\n' "$origin" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9+._-]*$' || {
+                echo "invalid package origin: $origin" >&2
+                exit 1
+              }
+              test -f "packages/$origin/APKBUILD" || {
+                echo "unknown package origin: $origin" >&2
+                exit 1
+              }
               if printf '%s\n' "$files" | grep -Eq "^packages/$origin/"; then
                 package_origins="${package_origins:+$package_origins,}$origin"
               fi
@@ -222,11 +239,5 @@ jobs:
             *,gnupg,*)
               version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
               scripts/test-package.sh "$version"
-              ;;
-          esac
-          case ",${ORIGINS}," in
-            *,zerostack,*)
-              version=$(sed -n 's/^pkgver=//p' packages/zerostack/APKBUILD)
-              test "$(zerostack --version)" = "zerostack $version"
               ;;
           esac

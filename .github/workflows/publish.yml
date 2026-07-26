@@ -51,6 +51,8 @@ jobs:
           HEAD_SHA: ${{ env.HEAD_SHA }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          x86_64_build_allowed=true
+          aarch64_build_allowed=true
           if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
             jobs=$(gh api --paginate \
               "repos/$GITHUB_REPOSITORY/actions/runs/${{ github.event.workflow_run.id }}/jobs" \
@@ -60,9 +62,20 @@ jobs:
               exit 1
             }
             build_jobs=$(printf '%s\n' "$jobs" | grep -E '^build \(' || true)
-            if [ -n "$build_jobs" ] && ! printf '%s\n' "$build_jobs" | grep -q $'\tsuccess$'; then
-              echo 'all architecture builds failed' >&2
-              exit 1
+            if [ -z "$build_jobs" ]; then
+              x86_64_build_allowed=false
+              aarch64_build_allowed=false
+            else
+              x86_64_build_allowed=false
+              aarch64_build_allowed=false
+              printf '%s\n' "$build_jobs" | grep -Eq '^build \(x86_64,.*\tsuccess$' &&
+                x86_64_build_allowed=true
+              printf '%s\n' "$build_jobs" | grep -Eq '^build \(aarch64,.*\tsuccess$' &&
+                aarch64_build_allowed=true
+              if [ "$x86_64_build_allowed" = false ] && [ "$aarch64_build_allowed" = false ]; then
+                echo 'all architecture builds failed' >&2
+                exit 1
+              fi
             fi
           fi
           supports_arch() {
@@ -140,11 +153,15 @@ jobs:
             done
           fi
           publish=false
-          [ -n "$x86_64_origins" ] && publish=true
-          [ -n "$aarch64_origins" ] && publish=true
+          if [ "$x86_64_build_allowed" = true ] && [ -n "$x86_64_origins" ]; then
+            x86_64_publish=true
+            publish=true
+          fi
+          if [ "$aarch64_build_allowed" = true ] && [ -n "$aarch64_origins" ]; then
+            aarch64_publish=true
+            publish=true
+          fi
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
-          [ -n "$x86_64_origins" ] && x86_64_publish=true
-          [ -n "$aarch64_origins" ] && aarch64_publish=true
           echo "x86_64_publish=$x86_64_publish" >> "$GITHUB_OUTPUT"
           echo "x86_64_origins=$x86_64_origins" >> "$GITHUB_OUTPUT"
           echo "aarch64_publish=$aarch64_publish" >> "$GITHUB_OUTPUT"
@@ -174,7 +191,9 @@ jobs:
       - name: Build changed packages with an ephemeral key
         env:
           ORIGINS: ${{ needs.scope.outputs[matrix.origins_output] }}
+          BUILD_ALLOWED: ${{ needs.scope.outputs[matrix.publish_output] }}
         run: |
+          [ "$BUILD_ALLOWED" = true ] || exit 0
           mkdir -p "$RUNNER_TEMP/repository/packages/${{ matrix.arch }}" "$RUNNER_TEMP/new"
           docker run --rm \
             -e BOOTSTRAP="${{ inputs.bootstrap }}" \

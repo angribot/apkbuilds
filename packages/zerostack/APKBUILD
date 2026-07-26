@@ -1,6 +1,6 @@
 pkgname=zerostack
 pkgver=1.7.2
-pkgrel=0
+pkgrel=1
 pkgdesc="Minimalistic coding agent written in Rust"
 url="https://github.com/gi-dellav/zerostack"
 arch="x86_64 aarch64"
@@ -19,8 +19,9 @@ esac
 source="zerostack-$pkgver-$CARCH.tar.gz::https://github.com/gi-dellav/zerostack/releases/download/v$pkgver/zerostack-$CARCH-unknown-linux-musl.tar.gz"
 
 package() {
-	install -Dm755 "$srcdir/zerostack-$CARCH-unknown-linux-musl" \
-		"$pkgdir/usr/bin/zerostack"
+	binary="$srcdir/zerostack-$CARCH-unknown-linux-musl"
+	test "$("$binary" --version)" = "zerostack $pkgver"
+	install -Dm755 "$binary" "$pkgdir/usr/bin/zerostack"
 }
 
 sha512sums="

@@ -111,4 +111,14 @@ jobs:
           ' <<< "$pr" > /dev/null
           number=$(printf '%s' "$pr" | jq -r '.[0].number')
           gh pr merge --repo "$GITHUB_REPOSITORY" "$number" --squash --delete-branch
-          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main -f build=false
+          merged_sha=
+          for _ in $(seq 1 30); do
+            merged_sha=$(gh pr view --repo "$GITHUB_REPOSITORY" "$number" \
+              --json mergeCommit --jq '.mergeCommit.oid // empty')
+            main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
+              --jq '.object.sha')
+            [ -n "$merged_sha" ] && [ "$main_sha" = "$merged_sha" ] && break
+            sleep 2
+          done
+          test -n "$merged_sha" && test "$main_sha" = "$merged_sha"
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main -f origins="$PACKAGE"
