@@ -29,7 +29,7 @@ jobs:
       - name: Install tools
         # The aports lint image requires registry authentication, so install
         # the same checks onto a plain alpine:edge instead.
-        run: apk add --no-cache alpine-sdk atools git python3
+        run: apk add --no-cache alpine-sdk atools-apkbuild-lint git python3 shellcheck
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
@@ -51,7 +51,12 @@ jobs:
             (
               cd "packages/$origin"
               abuild -f validate || exit 1
-              apkbuild-shellcheck APKBUILD || exit 1
+              # `apkbuild-shellcheck` is gone from Alpine; call shellcheck
+              # directly. An APKBUILD is a sourced fragment, so the variables
+              # and functions abuild supplies read as unassigned/unreachable,
+              # and abuild runs each phase under `set -e`, so a bare `cd`
+              # already aborts on failure.
+              shellcheck --shell=ash --exclude=SC2034,SC2154,SC2164 APKBUILD || exit 1
               apkbuild-lint APKBUILD || exit 1
             ) || status=1
           done
