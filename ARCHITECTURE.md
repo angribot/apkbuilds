@@ -8,7 +8,9 @@ What the workflows cannot state themselves. For how the pipeline runs, read
 ```
 packages/<origin>/APKBUILD    one origin per directory
 keys/apkbuilds.rsa.pub        the public half of the release key
+keys/gnupg-release.asc        upstream GnuPG signing keys
 scripts/lib.sh                helpers sourced by ci.yml
+scripts/test-package.sh       post-publication smoke test
 scripts/update*.py            per-package upstream trackers
 ```
 
