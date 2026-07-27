@@ -1,6 +1,6 @@
 #!/bin/sh
 # Install the build toolchain and create the unprivileged abuild user.
-# Shared by ci.yml and publish.yml so their dependency sets cannot drift.
+# Sourced by the ci.yml build job so its toolchain stays in one place.
 # Runs as root inside an alpine container. Arguments are directories to hand
 # to the builder user.
 set -eu

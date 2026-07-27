@@ -1,9 +1,11 @@
 pkgname=zerostack
 pkgver=1.7.2
-pkgrel=1
+pkgrel=2
 pkgdesc="Minimalistic coding agent written in Rust"
 url="https://github.com/gi-dellav/zerostack"
-arch="x86_64 aarch64"
+# Upstream's aarch64 binary cannot run since 1.7.2; see angribot/apkbuilds#35.
+# aarch64 users stay on the published 1.7.1-r0 until upstream ships a fix.
+arch="x86_64 !aarch64"
 license="GPL-3.0-only"
 depends="bash"
 options="!check !strip" # staged APK is tested with its repository read-only
