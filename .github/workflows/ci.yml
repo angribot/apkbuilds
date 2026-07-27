@@ -25,8 +25,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Pinned by digest: the upstream `latest` tag is mutable, so an unpinned
+    # image could change lint results without a commit here.
+    container: registry.alpinelinux.org/alpine/infra/docker/apkbuild-lint-tools:latest@sha256:6300f3fe1d222f85d358c462931a3dcded73a6b230e113a7ab7502933985a873
+    steps:
+      - name: Check out repository
+        run: |
+          apk add --no-cache git
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          git init --initial-branch=ci
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git fetch --depth 1 origin "$HEAD_REF"
+          git checkout --detach FETCH_HEAD
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Lint APKBUILDs
+        run: |
+          # The image ships an aports-specific `lint` wrapper that depends on
+          # GitLab merge-request variables, so drive the underlying checks
+          # directly instead. Both tools need an explicit APKBUILD path:
+          # `apkbuild-shellcheck` with no argument reads stdin, which is empty
+          # here and would silently pass.
+          . "$GITHUB_WORKSPACE/scripts/lib.sh"
+          status=0
+          for origin in $(all_origins); do
+            printf '==> linting %s\n' "$origin"
+            (
+              cd "packages/$origin"
+              abuild -f validate || exit 1
+              apkbuild-shellcheck APKBUILD || exit 1
+              apkbuild-lint APKBUILD || exit 1
+            ) || status=1
+          done
+          exit "$status"
+
   test-updater:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       build: ${{ steps.scope.outputs.build }}
       origins: ${{ steps.scope.outputs.origins }}
@@ -47,9 +86,9 @@ jobs:
           BUILD_REQUESTED: ${{ inputs.build }}
           BUILD_ORIGINS: ${{ inputs.origins }}
         run: |
-          all_origins() {
-            find packages -mindepth 2 -maxdepth 2 -name APKBUILD \
-              -exec dirname {} \; | sed 's#^packages/##' | sort -u | paste -sd, -
+          . scripts/lib.sh
+          all_origins_csv() {
+            all_origins | paste -sd, -
           }
           files=
           version_base=
@@ -80,7 +119,7 @@ jobs:
                   if [ -n "$BUILD_ORIGINS" ]; then
                     origins=$BUILD_ORIGINS
                   elif [ "$BUILD_REQUESTED" != false ]; then
-                    origins=$(all_origins)
+                    origins=$(all_origins_csv)
                   fi
                   ;;
               esac
@@ -88,13 +127,13 @@ jobs:
           esac
           if [ -n "$files" ]; then
             origins=$(printf '%s\n' "$files" | python3 scripts/repository.py scope | jq -r '.[]' | paste -sd, -)
-            if printf '%s\n' "$files" | grep -Eq '^scripts/(prepare-builder|test-package)\.sh$'; then
-              origins=$(all_origins)
+            if printf '%s\n' "$files" | grep -Eq '^scripts/(lib|prepare-builder|test-package)\.sh$'; then
+              origins=$(all_origins_csv)
             fi
           fi
           if [ -n "$origins" ]; then
             build=true
-            for origin in $(printf '%s' "$origins" | tr ',' ' '); do
+            for origin in $(split_origins "$origins"); do
               printf '%s\n' "$origin" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9+._-]*$' || {
                 echo "invalid package origin: $origin" >&2
                 exit 1
@@ -110,18 +149,21 @@ jobs:
           else
             build=false
           fi
-          echo "build=$build" >> "$GITHUB_OUTPUT"
-          echo "origins=$origins" >> "$GITHUB_OUTPUT"
-          echo "package_origins=$package_origins" >> "$GITHUB_OUTPUT"
-          echo "version_base=$version_base" >> "$GITHUB_OUTPUT"
+          {
+            echo "build=$build"
+            echo "origins=$origins"
+            echo "package_origins=$package_origins"
+            echo "version_base=$version_base"
+          } >> "$GITHUB_OUTPUT"
       - name: Enforce package version semantics
         if: steps.scope.outputs.package_origins != ''
         env:
           VERSION_BASE: ${{ steps.scope.outputs.version_base }}
           PACKAGE_ORIGINS: ${{ steps.scope.outputs.package_origins }}
         run: |
+          . scripts/lib.sh
           test -n "$VERSION_BASE"
-          for origin in $(printf '%s' "$PACKAGE_ORIGINS" | tr ',' ' '); do
+          for origin in $(split_origins "$PACKAGE_ORIGINS"); do
             previous="$RUNNER_TEMP/$origin-APKBUILD"
             if git cat-file -e "$VERSION_BASE:packages/$origin/APKBUILD" 2>/dev/null; then
               git show "$VERSION_BASE:packages/$origin/APKBUILD" > "$previous"
@@ -132,8 +174,9 @@ jobs:
           done
 
   build:
-    needs: test-updater
+    needs: [lint, test-updater]
     if: needs.test-updater.outputs.build == 'true'
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -163,21 +206,13 @@ jobs:
         env:
           ORIGINS: ${{ needs.test-updater.outputs.origins }}
         run: |
-          supports_arch() {
-            declared=$(sed -n 's/^arch="\(.*\)"$/\1/p' "packages/$2/APKBUILD")
-            [ -z "$declared" ] && return 0
-            case " $declared " in
-              *" !$1 "*) return 1 ;;
-              *" all "*|*" noarch "*|*" $1 "*) return 0 ;;
-            esac
-            return 1
-          }
-          for origin in $(printf '%s' "$ORIGINS" | tr ',' ' '); do
+          . scripts/lib.sh
+          for origin in $(split_origins "$ORIGINS"); do
             test -f "packages/$origin/APKBUILD" || {
               echo "removing package $origin requires a repository migration" >&2
               exit 1
             }
-            supports_arch "${{ matrix.arch }}" "$origin" || continue
+            supports_arch "${{ matrix.arch }}" "packages/$origin/APKBUILD" || continue
             su builder -c "cd '$GITHUB_WORKSPACE/packages/$origin' && abuild -r"
           done
       - name: Verify replacement versions
@@ -185,6 +220,7 @@ jobs:
         env:
           PACKAGE_ORIGINS: ${{ needs.test-updater.outputs.package_origins }}
         run: |
+          . scripts/lib.sh
           cp keys/apkbuilds.rsa.pub /etc/apk/keys/
           previous=/tmp/previous-index.tar.gz
           wget -q -T 15 -t 4 "https://angribot.github.io/apkbuilds/edge/${{ matrix.arch }}/APKINDEX.tar.gz" -O "$previous"
@@ -197,19 +233,10 @@ jobs:
             --output /tmp/new-index.tar.gz \
             --rewrite-arch "${{ matrix.arch }}" \
             /tmp/new-packages/*.apk
-          supports_arch() {
-            declared=$(sed -n 's/^arch="\(.*\)"$/\1/p' "packages/$2/APKBUILD")
-            [ -z "$declared" ] && return 0
-            case " $declared " in
-              *" !$1 "*) return 1 ;;
-              *" all "*|*" noarch "*|*" $1 "*) return 0 ;;
-            esac
-            return 1
-          }
           set -- --previous-index "$previous" --built-index /tmp/new-index.tar.gz
           selected=false
-          for origin in $(printf '%s' "$PACKAGE_ORIGINS" | tr ',' ' '); do
-            supports_arch "${{ matrix.arch }}" "$origin" || continue
+          for origin in $(split_origins "$PACKAGE_ORIGINS"); do
+            supports_arch "${{ matrix.arch }}" "packages/$origin/APKBUILD" || continue
             selected=true
             set -- "$@" --origin "$origin"
           done
@@ -226,6 +253,7 @@ jobs:
         env:
           ORIGINS: ${{ needs.test-updater.outputs.origins }}
         run: |
+          . scripts/lib.sh
           repository=/home/builder/.local/share/abuild/packages
           mkdir /tmp/install-packages
           find "$repository" -type f -name '*.apk' -exec cp {} /tmp/install-packages/ \;
@@ -237,7 +265,7 @@ jobs:
           "$@"
           case ",${ORIGINS}," in
             *,gnupg,*)
-              version=$(sed -n 's/^pkgver=//p' packages/gnupg/APKBUILD)
+              version=$(apkbuild_field pkgver packages/gnupg/APKBUILD)
               scripts/test-package.sh "$version"
               ;;
           esac

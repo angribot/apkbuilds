@@ -33,6 +33,7 @@ jobs:
       github.event.workflow_run.event == 'workflow_dispatch') &&
       github.event.workflow_run.head_sha == github.sha)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       publish: ${{ steps.changes.outputs.publish }}
       x86_64_publish: ${{ steps.changes.outputs.x86_64_publish }}
@@ -51,6 +52,7 @@ jobs:
           HEAD_SHA: ${{ env.HEAD_SHA }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          . scripts/lib.sh
           x86_64_build_allowed=true
           aarch64_build_allowed=true
           if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
@@ -78,21 +80,8 @@ jobs:
               fi
             fi
           fi
-          supports_arch() {
-            declared=$(sed -n 's/^arch="\(.*\)"$/\1/p' "$2")
-            [ -z "$declared" ] && return 0
-            case " $declared " in
-              *" !$1 "*) return 1 ;;
-              *" all "*|*" noarch "*|*" $1 "*) return 0 ;;
-            esac
-            return 1
-          }
           all_origins_for_arch() {
-            for origin in $(find packages -mindepth 2 -maxdepth 2 -name APKBUILD \
-              -exec dirname {} \; | sed 's#^packages/##' | sort -u); do
-              supports_arch "$1" "packages/$origin/APKBUILD" || continue
-              printf '%s\n' "$origin"
-            done | paste -sd, -
+            origins_for_arch "$1" | paste -sd, -
           }
           x86_64_publish=false
           x86_64_origins=
@@ -105,10 +94,7 @@ jobs:
             for arch in x86_64 aarch64; do
               marker="https://angribot.github.io/apkbuilds/commits/$arch?run=$GITHUB_RUN_ID"
               deployed=$(curl --connect-timeout 15 --max-time 60 --retry 3 \
-                --retry-connrefused -fsSL "$marker" || \
-                curl --connect-timeout 15 --max-time 60 --retry 3 \
-                  --retry-connrefused -fsSL \
-                  "https://angribot.github.io/apkbuilds/commit?run=$GITHUB_RUN_ID")
+                --retry-connrefused -fsSL "$marker")
               [[ "$deployed" =~ ^[0-9a-f]{40}$ ]] || {
                 echo "$arch published commit marker is invalid; use bootstrap only for first publication" >&2
                 exit 1
@@ -161,11 +147,13 @@ jobs:
             aarch64_publish=true
             publish=true
           fi
-          echo "publish=$publish" >> "$GITHUB_OUTPUT"
-          echo "x86_64_publish=$x86_64_publish" >> "$GITHUB_OUTPUT"
-          echo "x86_64_origins=$x86_64_origins" >> "$GITHUB_OUTPUT"
-          echo "aarch64_publish=$aarch64_publish" >> "$GITHUB_OUTPUT"
-          echo "aarch64_origins=$aarch64_origins" >> "$GITHUB_OUTPUT"
+          {
+            echo "publish=$publish"
+            echo "x86_64_publish=$x86_64_publish"
+            echo "x86_64_origins=$x86_64_origins"
+            echo "aarch64_publish=$aarch64_publish"
+            echo "aarch64_origins=$aarch64_origins"
+          } >> "$GITHUB_OUTPUT"
 
   build:
     needs: scope
@@ -183,6 +171,7 @@ jobs:
             publish_output: aarch64_publish
             origins_output: aarch64_origins
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -208,6 +197,7 @@ jobs:
             -w /workspace \
             alpine:edge sh -euxc '
               sh /workspace/scripts/prepare-builder.sh /new /repository /workspace
+              . /workspace/scripts/lib.sh
               download() {
                 curl --connect-timeout 15 --max-time 120 --retry 3 \
                   --retry-connrefused -fsSL "$1" -o "$2"
@@ -229,7 +219,7 @@ jobs:
                 touch "/verified/$TARGET_ARCH"
                 if [ "$BUILD_ALLOWED" = true ] && [ -n "$ORIGINS" ]; then
                   set -- --index "$previous_index"
-                  for origin in $(printf %s "$ORIGINS" | tr , \ ); do
+                  for origin in $(split_origins "$ORIGINS"); do
                     set -- "$@" --origin "$origin"
                   done
                   python3 /workspace/scripts/repository.py retained "$@" > /tmp/retained-packages
@@ -248,7 +238,7 @@ jobs:
                   if [ "$BUILD_ALLOWED" = true ] && [ -n "$ORIGINS" ]; then
                     set -- --previous-index "$previous_index" \
                       --retained-index /tmp/retained-index.tar.gz
-                    for origin in $(printf %s "$ORIGINS" | tr , \ ); do
+                    for origin in $(split_origins "$ORIGINS"); do
                       set -- "$@" --origin "$origin"
                     done
                     python3 /workspace/scripts/repository.py verify-retained "$@"
@@ -258,7 +248,7 @@ jobs:
               [ "$BUILD_ALLOWED" = true ] || exit 0
               su builder -c "abuild-keygen -a -n"
               cp /home/builder/.config/abuild/*.rsa.pub /etc/apk/keys/
-              for origin in $(printf %s "$ORIGINS" | tr , \ ); do
+              for origin in $(split_origins "$ORIGINS"); do
                 su builder -c "cd /workspace/packages/$origin && REPODEST=/new abuild -r"
               done
               new_packages="/new/packages/$TARGET_ARCH"
@@ -270,7 +260,7 @@ jobs:
                 "$new_packages"/*.apk
               set -- --built-index /tmp/new-index.tar.gz
               [ -n "$previous_index" ] && set -- --previous-index "$previous_index" "$@"
-              for origin in $(printf %s "$ORIGINS" | tr , \ ); do
+              for origin in $(split_origins "$ORIGINS"); do
                 set -- "$@" --origin "$origin"
               done
               python3 /workspace/scripts/repository.py replacements "$@" > /tmp/replacements
@@ -326,6 +316,7 @@ jobs:
             publish_output: aarch64_publish
             origins_output: aarch64_origins
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     environment: release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -440,6 +431,7 @@ jobs:
       needs.scope.outputs.publish == 'true' &&
       needs.sign.result != 'cancelled' && needs.sign.result != 'skipped'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       pages: write
@@ -478,10 +470,7 @@ jobs:
             esac
             marker="https://angribot.github.io/apkbuilds/commits/$arch?run=$GITHUB_RUN_ID"
             deployed=$(curl --connect-timeout 15 --max-time 60 --retry 3 \
-              --retry-connrefused -fsSL "$marker" || \
-              curl --connect-timeout 15 --max-time 60 --retry 3 \
-                --retry-connrefused -fsSL \
-                "https://angribot.github.io/apkbuilds/commit?run=$GITHUB_RUN_ID")
+              --retry-connrefused -fsSL "$marker")
             [[ "$deployed" =~ ^[0-9a-f]{40}$ ]]
             mkdir "public/edge/$arch"
             repository="https://angribot.github.io/apkbuilds/edge/$arch"
@@ -528,6 +517,7 @@ jobs:
             runner: ubuntu-24.04-arm
             origins_output: aarch64_origins
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -563,13 +553,10 @@ jobs:
               test "$published" = "$PUBLISHED_SHA"
               [ -n "$ORIGINS" ] || exit 0
               apk update
+              . /workspace/scripts/lib.sh
               set -- apk add
-              for origin in $(printf %s "$ORIGINS" | tr , \ ); do
-                apkbuild="/workspace/packages/$origin/APKBUILD"
-                name=$(sed -n 's/^pkgname=//p' "$apkbuild")
-                version=$(sed -n 's/^pkgver=//p' "$apkbuild")
-                revision=$(sed -n 's/^pkgrel=//p' "$apkbuild")
-                set -- "$@" "$name=$version-r$revision"
+              for origin in $(split_origins "$ORIGINS"); do
+                set -- "$@" "$(apkbuild_pinned_spec "/workspace/packages/$origin")"
               done
               "$@"
             '

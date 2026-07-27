@@ -25,6 +25,7 @@ jobs:
             apkbuild: packages/zerostack/APKBUILD
             body: Verified both musl release assets against GitHub-provided SHA-256 digests.
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     env:
       PACKAGE: ${{ matrix.package }}
       UPDATER: ${{ matrix.updater }}
@@ -67,8 +68,10 @@ jobs:
           git push origin "$branch"
           gh pr create --base main --head "$branch" --title "$PACKAGE: upgrade to $VERSION" --body "$PR_BODY"
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
-          echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo 'created=true' >> "$GITHUB_OUTPUT"
+          {
+            echo "head_sha=$(git rev-parse HEAD)"
+            echo 'created=true'
+          } >> "$GITHUB_OUTPUT"
       - name: Validate, merge, and publish update
         if: steps.create.outputs.created == 'true'
         env:
