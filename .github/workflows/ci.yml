@@ -35,8 +35,15 @@ jobs:
           fetch-depth: 0
       - name: Trust the workspace
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Create the builder user
+        # `abuild` refuses to run as root, and the container's only user is
+        # root. Reuse the build job's setup so both jobs get the same user.
+        run: . scripts/prepare-builder.sh "$GITHUB_WORKSPACE"
       - name: Lint APKBUILDs
         run: |
+          # Feed the script over stdin: nesting it inside `su -c '...'` would
+          # need a second layer of quoting for every expansion.
+          su builder -s /bin/sh <<'LINT'
           . scripts/lib.sh
           status=0
           for origin in $(all_origins); do
@@ -49,6 +56,7 @@ jobs:
             ) || status=1
           done
           exit "$status"
+          LINT
       - name: Run unit tests
         run: python3 -m unittest discover -s tests
       - name: Require a version increase for edited packages
