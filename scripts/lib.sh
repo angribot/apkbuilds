@@ -1,6 +1,6 @@
 #!/bin/sh
-# Shared helpers sourced by ci.yml and publish.yml so the two workflows cannot
-# drift. POSIX sh only: this runs inside alpine containers with busybox ash.
+# Shared helpers sourced by ci.yml. POSIX sh only: this runs inside alpine
+# containers with busybox ash.
 
 # Report whether an APKBUILD declares support for an architecture.
 #   supports_arch <arch> <apkbuild-path>
@@ -16,18 +16,6 @@ supports_arch() {
     *" all "*|*" noarch "*|*" $_sa_arch "*) return 0 ;;
   esac
   return 1
-}
-
-# Print the origins of every package in the tree that supports an architecture,
-# one per line.
-#   origins_for_arch <arch>
-# POSIX sh has no `local`, so the loop variable is named distinctively to avoid
-# clobbering a caller that is itself iterating over `origin`.
-origins_for_arch() {
-  for _ofa_origin in $(all_origins); do
-    supports_arch "$1" "packages/$_ofa_origin/APKBUILD" || continue
-    printf '%s\n' "$_ofa_origin"
-  done
 }
 
 # Print every package origin in the tree, one per line.
@@ -57,8 +45,14 @@ apkbuild_pinned_spec() {
   printf '%s=%s-r%s\n' "$_aps_name" "$_aps_version" "$_aps_revision"
 }
 
-# Split a comma-separated origin list into whitespace-separated words.
-#   split_origins <csv>
-split_origins() {
-  printf '%s' "$1" | tr ',' ' '
+# Print the .apk filename this APKBUILD is expected to produce. The build job
+# tests for this file in the published repository to decide whether the origin
+# still needs building, so a wrong name means a package is silently rebuilt
+# every run.
+#   apkbuild_pinned_apk <origin-directory>
+apkbuild_pinned_apk() {
+  _apa_name=$(apkbuild_field pkgname "$1/APKBUILD")
+  _apa_version=$(apkbuild_field pkgver "$1/APKBUILD")
+  _apa_revision=$(apkbuild_field pkgrel "$1/APKBUILD")
+  printf '%s-%s-r%s.apk\n' "$_apa_name" "$_apa_version" "$_apa_revision"
 }

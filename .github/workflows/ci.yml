@@ -7,50 +7,37 @@ on:
   pull_request:
     paths-ignore: ["**.md"]
   workflow_dispatch:
-    inputs:
-      build:
-        description: Build packages
-        type: boolean
-        default: true
-      origins:
-        description: Comma-separated package origins to build
-        type: string
-        default: ''
 
 permissions:
   contents: read
 
+# Publication mutates a single branch, so runs must not overlap on main.
+# Cancelling superseded PR runs is safe because they publish nothing.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PAGES_URL: https://angribot.github.io/apkbuilds
 
 jobs:
-  lint:
+  check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # Pinned by digest: the upstream `latest` tag is mutable, so an unpinned
-    # image could change lint results without a commit here.
-    container: registry.alpinelinux.org/alpine/infra/docker/apkbuild-lint-tools:latest@sha256:6300f3fe1d222f85d358c462931a3dcded73a6b230e113a7ab7502933985a873
+    timeout-minutes: 15
+    container: alpine:edge
     steps:
-      - name: Check out repository
-        run: |
-          apk add --no-cache git
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          cd "$GITHUB_WORKSPACE"
-          git init --initial-branch=ci
-          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
-          git fetch --depth 1 origin "$HEAD_REF"
-          git checkout --detach FETCH_HEAD
-        env:
-          HEAD_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Install tools
+        # The aports lint image requires registry authentication, so install
+        # the same checks onto a plain alpine:edge instead.
+        run: apk add --no-cache alpine-sdk atools git python3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Lint APKBUILDs
         run: |
-          # The image ships an aports-specific `lint` wrapper that depends on
-          # GitLab merge-request variables, so drive the underlying checks
-          # directly instead. Both tools need an explicit APKBUILD path:
-          # `apkbuild-shellcheck` with no argument reads stdin, which is empty
-          # here and would silently pass.
-          . "$GITHUB_WORKSPACE/scripts/lib.sh"
+          . scripts/lib.sh
           status=0
           for origin in $(all_origins); do
             printf '==> linting %s\n' "$origin"
@@ -62,121 +49,34 @@ jobs:
             ) || status=1
           done
           exit "$status"
-
-  test-updater:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    outputs:
-      build: ${{ steps.scope.outputs.build }}
-      origins: ${{ steps.scope.outputs.origins }}
-      package_origins: ${{ steps.scope.outputs.package_origins }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 0
-      - run: python3 -m unittest discover -s tests
-      - name: Select build scope
-        id: scope
+      - name: Run unit tests
+        run: python3 -m unittest discover -s tests
+      - name: Require a version increase for edited packages
+        if: github.event_name == 'pull_request'
         env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
-          BUILD_REQUESTED: ${{ inputs.build }}
-          BUILD_ORIGINS: ${{ inputs.origins }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          # Publication skips any package whose .apk already exists, so an
+          # edit that forgets to bump pkgrel would never reach users.
           . scripts/lib.sh
-          all_origins_csv() {
-            all_origins | paste -sd, -
-          }
-          files=
-          version_base=
-          build=false
-          origins=
-          package_origins=
-          case "$GITHUB_EVENT_NAME" in
-            pull_request)
-              version_base=$PR_BASE_SHA
-              files=$(git diff --name-only --no-renames \
-                "$version_base...$PR_HEAD_SHA")
-              ;;
-            push)
-              if [ "$PUSH_BEFORE" != 0000000000000000000000000000000000000000 ]; then
-                version_base=$PUSH_BEFORE
-                files=$(git diff --name-only --no-renames \
-                  "$version_base...$GITHUB_SHA")
-              fi
-              ;;
-            workflow_dispatch)
-              case "$GITHUB_REF_NAME" in
-                update/*)
-                  version_base="origin/$DEFAULT_BRANCH"
-                  files=$(git diff --name-only --no-renames \
-                    "$version_base...$GITHUB_SHA")
-                  ;;
-                *)
-                  if [ -n "$BUILD_ORIGINS" ]; then
-                    origins=$BUILD_ORIGINS
-                  elif [ "$BUILD_REQUESTED" != false ]; then
-                    origins=$(all_origins_csv)
-                  fi
-                  ;;
-              esac
-              ;;
-          esac
-          if [ -n "$files" ]; then
-            origins=$(printf '%s\n' "$files" | python3 scripts/repository.py scope | jq -r '.[]' | paste -sd, -)
-            if printf '%s\n' "$files" | grep -Eq '^scripts/(lib|prepare-builder|test-package)\.sh$'; then
-              origins=$(all_origins_csv)
-            fi
-          fi
-          if [ -n "$origins" ]; then
-            build=true
-            for origin in $(split_origins "$origins"); do
-              printf '%s\n' "$origin" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9+._-]*$' || {
-                echo "invalid package origin: $origin" >&2
-                exit 1
-              }
-              test -f "packages/$origin/APKBUILD" || {
-                echo "unknown package origin: $origin" >&2
-                exit 1
-              }
-              if printf '%s\n' "$files" | grep -Eq "^packages/$origin/"; then
-                package_origins="${package_origins:+$package_origins,}$origin"
-              fi
-            done
-          else
-            build=false
-          fi
-          {
-            echo "build=$build"
-            echo "origins=$origins"
-            echo "package_origins=$package_origins"
-            echo "version_base=$version_base"
-          } >> "$GITHUB_OUTPUT"
-      - name: Enforce package version semantics
-        if: steps.scope.outputs.package_origins != ''
-        env:
-          VERSION_BASE: ${{ steps.scope.outputs.version_base }}
-          PACKAGE_ORIGINS: ${{ steps.scope.outputs.package_origins }}
-        run: |
-          . scripts/lib.sh
-          test -n "$VERSION_BASE"
-          for origin in $(split_origins "$PACKAGE_ORIGINS"); do
+          status=0
+          for origin in $(all_origins); do
+            apkbuild="packages/$origin/APKBUILD"
+            git diff --quiet "$BASE_SHA" -- "$apkbuild" && continue
             previous="$RUNNER_TEMP/$origin-APKBUILD"
-            if git cat-file -e "$VERSION_BASE:packages/$origin/APKBUILD" 2>/dev/null; then
-              git show "$VERSION_BASE:packages/$origin/APKBUILD" > "$previous"
-              python3 scripts/repository.py verify-pkgrel \
-                --previous "$previous" \
-                --current "packages/$origin/APKBUILD"
+            git show "$BASE_SHA:$apkbuild" > "$previous" 2>/dev/null || continue
+            old=$(apkbuild_field pkgver "$previous")-r$(apkbuild_field pkgrel "$previous")
+            new=$(apkbuild_field pkgver "$apkbuild")-r$(apkbuild_field pkgrel "$apkbuild")
+            if [ "$(apk version -t "$new" "$old")" != '>' ]; then
+              echo "$origin must increase pkgver or pkgrel: $old -> $new" >&2
+              status=1
             fi
           done
+          exit "$status"
 
   build:
-    needs: [lint, test-updater]
-    if: needs.test-updater.outputs.build == 'true'
-    timeout-minutes: 60
+    needs: check
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -186,86 +86,259 @@ jobs:
           - arch: aarch64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    container: alpine:edge
     steps:
-      - name: Check out repository
-        run: |
-          apk add git
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git init "$GITHUB_WORKSPACE"
-          cd "$GITHUB_WORKSPACE"
-          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
-          git fetch origin "$GITHUB_REF"
-          git checkout --detach FETCH_HEAD
-      - name: Prepare builder
-        run: |
-          sh scripts/prepare-builder.sh "$GITHUB_WORKSPACE"
-          su builder -c 'abuild-keygen -a -n'
-          cp /home/builder/.config/abuild/*.rsa.pub /etc/apk/keys/
-      - name: Build changed packages
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Build packages missing from the published repository
         env:
-          ORIGINS: ${{ needs.test-updater.outputs.origins }}
+          ARCH: ${{ matrix.arch }}
+          BRANCH: ${{ github.ref_name }}
         run: |
-          . scripts/lib.sh
-          for origin in $(split_origins "$ORIGINS"); do
-            test -f "packages/$origin/APKBUILD" || {
-              echo "removing package $origin requires a repository migration" >&2
+          mkdir -p "$RUNNER_TEMP/new"
+          # An ephemeral key signs these packages: this job runs upstream
+          # build scripts, so it must never see the release key.
+          docker run --rm \
+            -e ARCH \
+            -e BRANCH \
+            -e PUBLISHED="$PAGES_URL/edge/${{ matrix.arch }}" \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -v "$RUNNER_TEMP/new:/new" \
+            -w /workspace \
+            alpine:edge sh -euxc '
+              sh scripts/prepare-builder.sh /new /workspace
+              . scripts/lib.sh
+              su builder -c "abuild-keygen -a -n"
+              cp /home/builder/.config/abuild/*.rsa.pub /etc/apk/keys/
+              for origin in $(all_origins); do
+                supports_arch "$ARCH" "packages/$origin/APKBUILD" || continue
+                apk="$(apkbuild_pinned_apk "packages/$origin")"
+                # A published .apk means this exact version already shipped.
+                if wget -q -T 15 -t 2 --spider "$PUBLISHED/$apk" 2>/dev/null; then
+                  printf "==> %s already published as %s\n" "$origin" "$apk"
+                  continue
+                fi
+                su builder -c "cd /workspace/packages/$origin && REPODEST=/new abuild -r"
+              done
+              built="/new/packages/$ARCH"
+              test -d "$built" || exit 0
+              find "$built" -name "*.apk" | sort
+              # Install what was built, unsigned, to catch packages that
+              # build but cannot be installed.
+              set -- apk add --allow-untrusted --repository "$built"
+              for package in "$built"/*.apk; do set -- "$@" "$package"; done
+              "$@"
+              if [ -f /workspace/packages/gnupg/APKBUILD ] &&
+                 [ -f "$built/$(apkbuild_pinned_apk packages/gnupg)" ]; then
+                scripts/test-package.sh "$(apkbuild_field pkgver packages/gnupg/APKBUILD)"
+              fi
+            '
+      - name: Stage the built packages
+        id: stage
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          built="$RUNNER_TEMP/new/packages/$ARCH"
+          if [ -n "$(find "$built" -name '*.apk' -print -quit 2>/dev/null)" ]; then
+            echo 'built=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'built=false' >> "$GITHUB_OUTPUT"
+            echo "no new packages for $ARCH"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: steps.stage.outputs.built == 'true'
+        with:
+          name: built-${{ matrix.arch }}
+          path: ${{ runner.temp }}/new/packages/${{ matrix.arch }}/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  sign:
+    needs: build
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check out the published repository
+        run: |
+          git clone --depth 1 --branch gh-pages \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$RUNNER_TEMP/pages"
+      - name: Download the built packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: built-*
+          path: ${{ runner.temp }}/built
+      - name: Merge the built packages into the repository
+        id: merge
+        run: |
+          merged=false
+          for arch in x86_64 aarch64; do
+            source="$RUNNER_TEMP/built/built-$arch"
+            test -d "$source" || continue
+            mkdir -p "$RUNNER_TEMP/pages/edge/$arch"
+            find "$source" -name '*.apk' -exec cp {} "$RUNNER_TEMP/pages/edge/$arch/" \;
+            merged=true
+          done
+          echo "merged=$merged" >> "$GITHUB_OUTPUT"
+      - name: Prepare an isolated signer
+        if: steps.merge.outputs.merged == 'true'
+        run: |
+          docker build --tag apkbuilds-signer - <<'EOF'
+          FROM alpine:edge
+          RUN apk add --no-cache abuild
+          EOF
+      - name: Sign the repository without network access
+        if: steps.merge.outputs.merged == 'true'
+        env:
+          ABUILD_PRIVATE_KEY: ${{ secrets.ABUILD_PRIVATE_KEY }}
+        run: |
+          # --network none keeps the release key away from anything that could
+          # exfiltrate it. Signing is architecture-independent, so one runner
+          # signs both trees.
+          docker run --rm --network none \
+            -e ABUILD_PRIVATE_KEY \
+            -v "$RUNNER_TEMP/pages:/pages" \
+            -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \
+            apkbuilds-signer sh -euxc '
+              umask 077
+              set +x
+              printf "%s\n" "$ABUILD_PRIVATE_KEY" > /tmp/apkbuilds.rsa
+              unset ABUILD_PRIVATE_KEY
+              set -x
+              trap "rm -f /tmp/apkbuilds.rsa" EXIT
+              cp /keys/apkbuilds.rsa.pub /etc/apk/keys/
+              for arch in x86_64 aarch64; do
+                repository="/pages/edge/$arch"
+                test -d "$repository" || continue
+                for package in "$repository"/*.apk; do
+                  # Already-published packages carry a valid signature.
+                  apk verify "$package" && continue
+                  work=$(mktemp -d)
+                  (
+                    cd "$work"
+                    abuild-gzsplit < "$package"
+                    abuild-sign -q -t RSA256 \
+                      -k /tmp/apkbuilds.rsa \
+                      -p /keys/apkbuilds.rsa.pub \
+                      control.tar.gz
+                    cat control.tar.gz data.tar.gz > "$package"
+                  )
+                  rm -rf "$work"
+                done
+                cd "$repository"
+                rm -f APKINDEX.tar.gz Packages.adb
+                apk index --no-warnings --quiet \
+                  --output APKINDEX.tar.gz \
+                  --rewrite-arch "$arch" \
+                  ./*.apk
+                abuild-sign -q -t RSA256 \
+                  -k /tmp/apkbuilds.rsa \
+                  -p /keys/apkbuilds.rsa.pub \
+                  APKINDEX.tar.gz
+              done
+            '
+      - name: Verify the repository without the private key
+        if: steps.merge.outputs.merged == 'true'
+        run: |
+          docker run --rm \
+            -v "$RUNNER_TEMP/pages:/pages:ro" \
+            -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \
+            alpine:edge sh -euxc '
+              cp /keys/apkbuilds.rsa.pub /etc/apk/keys/
+              for arch in x86_64 aarch64; do
+                repository="/pages/edge/$arch"
+                test -d "$repository" || continue
+                apk verify "$repository/APKINDEX.tar.gz"
+                apk verify "$repository"/*.apk
+              done
+            '
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: steps.merge.outputs.merged == 'true'
+        with:
+          name: signed-repository
+          path: ${{ runner.temp }}/pages/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  publish:
+    needs: sign
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    outputs:
+      published: ${{ steps.push.outputs.published }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        id: download
+        continue-on-error: true
+        with:
+          name: signed-repository
+          path: pages
+      - name: Push the repository to gh-pages
+        id: push
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ '${{ steps.download.outcome }}' != success ]; then
+            echo 'no new packages to publish'
+            echo 'published=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          cd pages
+          git init -q --initial-branch=gh-pages
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add origin \
+            "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git"
+          git add -A
+          # A single orphan commit keeps the branch from accumulating the
+          # history of every .apk ever published.
+          git commit -q -m "Publish $GITHUB_SHA"
+          git push -q --force origin gh-pages
+          echo 'published=true' >> "$GITHUB_OUTPUT"
+
+  verify:
+    needs: publish
+    if: needs.publish.outputs.published == 'true'
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install every package at its exact version from Pages
+        run: |
+          docker run --rm \
+            -e PAGES_URL \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            alpine:edge sh -euxc '
+              . scripts/lib.sh
+              # Pages serves the new commit asynchronously, so poll for it.
+              for delay in 0 5 10 20 40 60; do
+                sleep "$delay"
+                wget -q -T 15 -t 2 -O /etc/apk/keys/apkbuilds.rsa.pub \
+                  "$PAGES_URL/apkbuilds.rsa.pub" && break
+              done
+              echo "$PAGES_URL/edge" >> /etc/apk/repositories
+              set -- apk add
+              for origin in $(all_origins); do
+                supports_arch "${{ matrix.arch }}" "packages/$origin/APKBUILD" || continue
+                set -- "$@" "$(apkbuild_pinned_spec "packages/$origin")"
+              done
+              for delay in 0 5 10 20 40 60; do
+                sleep "$delay"
+                apk update && "$@" && exit 0
+              done
               exit 1
-            }
-            supports_arch "${{ matrix.arch }}" "packages/$origin/APKBUILD" || continue
-            su builder -c "cd '$GITHUB_WORKSPACE/packages/$origin' && abuild -r"
-          done
-      - name: Verify replacement versions
-        if: needs.test-updater.outputs.package_origins != ''
-        env:
-          PACKAGE_ORIGINS: ${{ needs.test-updater.outputs.package_origins }}
-        run: |
-          . scripts/lib.sh
-          cp keys/apkbuilds.rsa.pub /etc/apk/keys/
-          previous=/tmp/previous-index.tar.gz
-          wget -q -T 15 -t 4 "https://angribot.github.io/apkbuilds/edge/${{ matrix.arch }}/APKINDEX.tar.gz" -O "$previous"
-          apk verify "$previous"
-          repository=/home/builder/.local/share/abuild/packages
-          mkdir /tmp/new-packages
-          find "$repository" -type f -name '*.apk' -exec cp {} /tmp/new-packages/ \;
-          test -n "$(find /tmp/new-packages -name '*.apk' -print -quit)"
-          apk index --no-warnings --quiet \
-            --output /tmp/new-index.tar.gz \
-            --rewrite-arch "${{ matrix.arch }}" \
-            /tmp/new-packages/*.apk
-          set -- --previous-index "$previous" --built-index /tmp/new-index.tar.gz
-          selected=false
-          for origin in $(split_origins "$PACKAGE_ORIGINS"); do
-            supports_arch "${{ matrix.arch }}" "packages/$origin/APKBUILD" || continue
-            selected=true
-            set -- "$@" --origin "$origin"
-          done
-          [ "$selected" = true ] || exit 0
-          python3 scripts/repository.py replacements "$@" > /tmp/replacements
-          while IFS="$(printf '\t')" read -r package new old; do
-            test "$(apk version -t "$new" "$old")" = ">" || {
-              echo "$package must increase version: $old -> $new" >&2
-              exit 1
-            }
-          done < /tmp/replacements
-      - name: Install changed packages
-        if: needs.test-updater.outputs.origins != ''
-        env:
-          ORIGINS: ${{ needs.test-updater.outputs.origins }}
-        run: |
-          . scripts/lib.sh
-          repository=/home/builder/.local/share/abuild/packages
-          mkdir /tmp/install-packages
-          find "$repository" -type f -name '*.apk' -exec cp {} /tmp/install-packages/ \;
-          test -n "$(find /tmp/install-packages -name '*.apk' -print -quit)" || exit 0
-          set -- apk add --repository "$repository"
-          for package in /tmp/install-packages/*.apk; do
-            set -- "$@" "$package"
-          done
-          "$@"
-          case ",${ORIGINS}," in
-            *,gnupg,*)
-              version=$(apkbuild_field pkgver packages/gnupg/APKBUILD)
-              scripts/test-package.sh "$version"
-              ;;
-          esac
+            '
