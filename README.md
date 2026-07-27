@@ -1,13 +1,14 @@
 # Alpine packages
 
-Signed GnuPG and zerostack packages automatically tracking stable upstream
+Signed GnuPG and zerostack packages automatically tracking eligible upstream
 releases for Alpine Linux edge. GnuPG is built from source; zerostack uses
 upstream's static musl binaries.
 
-Supported architectures: `x86_64` and `aarch64`. They may temporarily expose
-different package versions when one architecture build fails.
+Project-supported architectures: `x86_64` and `aarch64`. Each package family
+is published atomically per architecture. An origin-unsupported architecture
+retains its previous available build.
 
-## Add the repository
+## Add the APK repository
 
 Run as root:
 
@@ -26,7 +27,7 @@ apk update
 apk upgrade zerostack  # or: apk upgrade gnupg
 ```
 
-The repository contains GnuPG's complete split-package set. The `gpg` package
+The APK repository contains GnuPG's complete package family. The `gpg` package
 provides the minimal OpenPGP command-line tools, while the `gnupg` metapackage
 installs the full suite. The `zerostack` package installs the full upstream CLI.
 Runtime and build dependencies continue to come from Alpine edge, so stable

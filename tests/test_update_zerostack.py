@@ -25,8 +25,8 @@ def release(tag, assets=ASSETS, **values):
 
 
 class UpdateZerostackTest(unittest.TestCase):
-    def test_latest_release_requires_stable_tag_and_both_assets(self):
-        version, assets = update.latest_release(
+    def test_newest_eligible_release_requires_version_tag_and_both_assets(self):
+        version, assets = update.newest_eligible_release(
             [
                 release("v2.0.0-rc1"),
                 release("v1.10.0", prerelease=True),
@@ -38,11 +38,11 @@ class UpdateZerostackTest(unittest.TestCase):
         self.assertEqual(version, "1.8.0")
         self.assertEqual(set(assets), {"x86_64", "aarch64"})
 
-    def test_latest_release_rejects_missing_release(self):
-        with self.assertRaisesRegex(ValueError, "no stable releases"):
-            update.latest_release([])
+    def test_newest_eligible_release_rejects_missing_release(self):
+        with self.assertRaisesRegex(ValueError, "no eligible upstream releases"):
+            update.newest_eligible_release([])
 
-    def test_update_resets_release_and_both_checksums(self):
+    def test_update_resets_revision_and_both_checksums(self):
         text = (
             "pkgver=1.7.0\npkgrel=2\ncase \"$CARCH\" in\n"
             f"x86_64)\n\t_sha512=\"{'a' * 128}\"\n\t;;\n"

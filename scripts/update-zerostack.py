@@ -9,7 +9,7 @@ import urllib.request
 from urllib.error import HTTPError, URLError
 from pathlib import Path
 
-REPOSITORY = "https://github.com/gi-dellav/zerostack"
+UPSTREAM_REPOSITORY = "https://github.com/gi-dellav/zerostack"
 RELEASES = "https://api.github.com/repos/gi-dellav/zerostack/releases?per_page=100"
 ASSETS = {
     "x86_64": "zerostack-x86_64-unknown-linux-musl.tar.gz",
@@ -43,14 +43,14 @@ def version_key(version):
     return tuple(map(int, version.split(".")))
 
 
-def current_version(text):
+def declared_version(text):
     match = re.search(r"^pkgver=(\d+\.\d+\.\d+)$", text, re.MULTILINE)
     if not match:
         raise ValueError("pkgver not found")
     return match.group(1)
 
 
-def latest_release(releases):
+def newest_eligible_release(releases):
     candidates = []
     for release in releases:
         if not isinstance(release, dict) or release.get("draft") or release.get("prerelease"):
@@ -70,7 +70,7 @@ def latest_release(releases):
             (version_key(version), version, {arch: available[name] for arch, name in ASSETS.items()})
         )
     if not candidates:
-        raise ValueError("no stable releases with musl binaries found")
+        raise ValueError("no eligible upstream releases with musl binaries found")
     _, version, assets = max(candidates, key=lambda candidate: candidate[0])
     return version, assets
 
@@ -110,15 +110,15 @@ def main():
 
     text = APKBUILD.read_text()
     releases = json.loads(download(RELEASES))
-    version, assets = latest_release(releases)
-    current = current_version(text)
-    if version_key(version) <= version_key(current):
-        print(current)
+    version, assets = newest_eligible_release(releases)
+    declared = declared_version(text)
+    if version_key(version) <= version_key(declared):
+        print(declared)
         return
 
     digests = {}
     for arch, name in ASSETS.items():
-        url = f"{REPOSITORY}/releases/download/v{version}/{name}"
+        url = f"{UPSTREAM_REPOSITORY}/releases/download/v{version}/{name}"
         asset = assets[arch]
         if asset.get("browser_download_url") != url:
             raise ValueError(f"unexpected {arch} asset URL")

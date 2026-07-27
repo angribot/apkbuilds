@@ -35,24 +35,113 @@ apkbuild_field() {
     -e "s/^'\(.*\)'\$/\\1/"
 }
 
+# Require package-origin path name to equal APKBUILD pkgname. Alpine uses this
+# name as package origin, so allowing them to drift makes family replacement
+# ambiguous.
+#   assert_origin_directory <origin-directory>
+assert_origin_directory() {
+  _aod_directory=${1%/}
+  _aod_origin=${_aod_directory##*/}
+  _aod_pkgname=$(apkbuild_field pkgname "$_aod_directory/APKBUILD")
+  if [ "$_aod_origin" != "$_aod_pkgname" ]; then
+    printf '%s must match pkgname %s\n' "$_aod_directory" "$_aod_pkgname" >&2
+    return 1
+  fi
+}
+
+# Print every APK filename from an extracted, signature-verified APKINDEX.
+#   apkindex_apks <index-path>
+apkindex_apks() {
+  awk '
+    BEGIN { RS = ""; FS = "\n" }
+    {
+      package = version = ""
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^P:/) package = substr($i, 3)
+        else if ($i ~ /^V:/) version = substr($i, 3)
+      }
+      if (package != "" && version != "") print package "-" version ".apk"
+    }
+  ' "$1"
+}
+
+# Print APK filenames belonging to a package origin from an extracted,
+# signature-verified APKINDEX.
+#   apkindex_origin_apks <index-path> <package-origin>
+apkindex_origin_apks() {
+  awk -v wanted="$2" '
+    BEGIN { RS = ""; FS = "\n" }
+    {
+      package = version = origin = ""
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^P:/) package = substr($i, 3)
+        else if ($i ~ /^V:/) version = substr($i, 3)
+        else if ($i ~ /^o:/) origin = substr($i, 3)
+      }
+      if (origin == wanted && package != "" && version != "")
+        print package "-" version ".apk"
+    }
+  ' "$1"
+}
+
+# Print unique versions published for a package origin.
+#   apkindex_origin_versions <index-path> <package-origin>
+apkindex_origin_versions() {
+  awk -v wanted="$2" '
+    BEGIN { RS = ""; FS = "\n" }
+    {
+      version = origin = ""
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^V:/) version = substr($i, 3)
+        else if ($i ~ /^o:/) origin = substr($i, 3)
+      }
+      if (origin == wanted && version != "") versions[version] = 1
+    }
+    END { for (version in versions) print version }
+  ' "$1"
+}
+
+# Validate every record in a candidate index as one complete package-origin
+# family for the declared version and target architecture.
+#   apkindex_validate_family <index-path> <origin> <version> <arch>
+apkindex_validate_family() {
+  awk -v wanted_origin="$2" -v wanted_version="$3" -v wanted_arch="$4" '
+    BEGIN { RS = ""; FS = "\n" }
+    {
+      package = version = arch = origin = ""
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^P:/) package = substr($i, 3)
+        else if ($i ~ /^V:/) version = substr($i, 3)
+        else if ($i ~ /^A:/) arch = substr($i, 3)
+        else if ($i ~ /^o:/) origin = substr($i, 3)
+      }
+      count++
+      if (package == "" || origin != wanted_origin || version != wanted_version ||
+          (arch != wanted_arch && arch != "noarch")) invalid = 1
+    }
+    END { exit count == 0 || invalid }
+  ' "$1"
+}
+
+# Compare newline-delimited package filename sets without depending on order.
+#   package_sets_equal <expected-path> <actual-path>
+package_sets_equal() {
+  awk '
+    NR == FNR { if ($0 != "") expected[$0]++; next }
+    { if ($0 != "") actual[$0]++ }
+    END {
+      for (item in expected) if (expected[item] != actual[item]) exit 1
+      for (item in actual) if (actual[item] != expected[item]) exit 1
+    }
+  ' "$1" "$2"
+}
+
 # Print "name=version-rrevision" for a package origin, the exact-version form
-# `apk add` needs to prove the published repository serves this build.
+# `apk add` needs to prove the published APK repository serves this build.
 #   apkbuild_pinned_spec <origin-directory>
 apkbuild_pinned_spec() {
   _aps_name=$(apkbuild_field pkgname "$1/APKBUILD")
   _aps_version=$(apkbuild_field pkgver "$1/APKBUILD")
   _aps_revision=$(apkbuild_field pkgrel "$1/APKBUILD")
   printf '%s=%s-r%s\n' "$_aps_name" "$_aps_version" "$_aps_revision"
-}
-
-# Print the .apk filename this APKBUILD is expected to produce. The build job
-# tests for this file in the published repository to decide whether the origin
-# still needs building, so a wrong name means a package is silently rebuilt
-# every run.
-#   apkbuild_pinned_apk <origin-directory>
-apkbuild_pinned_apk() {
-  _apa_name=$(apkbuild_field pkgname "$1/APKBUILD")
-  _apa_version=$(apkbuild_field pkgver "$1/APKBUILD")
-  _apa_revision=$(apkbuild_field pkgrel "$1/APKBUILD")
-  printf '%s-%s-r%s.apk\n' "$_apa_name" "$_apa_version" "$_apa_revision"
 }

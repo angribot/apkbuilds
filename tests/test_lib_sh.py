@@ -1,10 +1,9 @@
 """Tests for scripts/lib.sh.
 
-Scope rule: cover only the helpers whose failure leaves CI green while the
-behaviour is wrong. A bad .apk filename or a leaked quote makes the build job
-miss a published package and rebuild silently, or makes `apk add` fail to pin
-a version. Mistakes that abort abuild or `apk verify` need no test here,
-because the workflow already turns red.
+Scope rule: cover only helpers whose failure leaves CI green while behaviour
+is wrong. Package-family parsing and comparison decide whether publication
+skips, rejects, or replaces a build. Mistakes that abort abuild or `apk verify`
+need no test here because the workflow already turns red.
 """
 
 import pathlib
@@ -74,18 +73,117 @@ class ApkbuildFieldTest(unittest.TestCase):
         self.assertIn("touch", out)
 
 
-class PinnedApkTest(unittest.TestCase):
-    def test_filename_matches_abuild_output(self):
-        # The build job probes the published repository for this exact name to
-        # decide whether an origin still needs building.
+class OriginDirectoryTest(unittest.TestCase):
+    def test_accepts_directory_named_for_package_origin(self):
         with tempfile.TemporaryDirectory() as directory:
-            origin = pathlib.Path(directory)
-            (origin / "APKBUILD").write_text(
-                'pkgname=gnupg\npkgver="2.5.21"\npkgrel=1\n'
-            )
-            status, out = run_helper(f'apkbuild_pinned_apk "{origin}"')
+            origin = pathlib.Path(directory) / "demo"
+            origin.mkdir()
+            (origin / "APKBUILD").write_text("pkgname=demo\n")
+            status, _ = run_helper(f'assert_origin_directory "{origin}"')
         self.assertEqual(status, 0)
-        self.assertEqual(out.strip(), "gnupg-2.5.21-r1.apk")
+
+    def test_rejects_directory_not_named_for_package_origin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            origin = pathlib.Path(directory) / "wrong"
+            origin.mkdir()
+            (origin / "APKBUILD").write_text("pkgname=demo\n")
+            completed = subprocess.run(
+                ["sh", "-eu", "-c", f'. {LIB}\nassert_origin_directory "{origin}"'],
+                capture_output=True,
+                text=True,
+            )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("must match pkgname demo", completed.stderr)
+
+
+class ApkindexTest(unittest.TestCase):
+    INDEX = """\
+P:gnupg
+V:2.5.21-r2
+A:x86_64
+o:gnupg
+
+P:gpg
+V:2.5.21-r2
+A:x86_64
+o:gnupg
+
+P:zerostack
+V:1.7.2-r2
+A:x86_64
+o:zerostack
+"""
+
+    def write_index(self, body=None):
+        index = tempfile.NamedTemporaryFile(mode="w", delete=False)
+        self.addCleanup(pathlib.Path(index.name).unlink)
+        index.write(self.INDEX if body is None else body)
+        index.close()
+        return index.name
+
+    def test_lists_every_indexed_apk(self):
+        status, out = run_helper(f'apkindex_apks "{self.write_index()}"')
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            out.splitlines(),
+            [
+                "gnupg-2.5.21-r2.apk",
+                "gpg-2.5.21-r2.apk",
+                "zerostack-1.7.2-r2.apk",
+            ],
+        )
+
+    def test_lists_complete_package_origin_family(self):
+        status, out = run_helper(
+            f'apkindex_origin_apks "{self.write_index()}" gnupg'
+        )
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            out.splitlines(),
+            ["gnupg-2.5.21-r2.apk", "gpg-2.5.21-r2.apk"],
+        )
+
+    def test_validates_candidate_family_metadata(self):
+        candidate = self.INDEX.rsplit("\nP:zerostack", 1)[0]
+        status, _ = run_helper(
+            f'apkindex_validate_family "{self.write_index(candidate)}" gnupg 2.5.21-r2 x86_64'
+        )
+        self.assertEqual(status, 0)
+
+    def test_accepts_noarch_package_in_candidate_family(self):
+        candidate = self.INDEX.rsplit("\nP:zerostack", 1)[0].replace(
+            "A:x86_64", "A:noarch"
+        )
+        status, _ = run_helper(
+            f'apkindex_validate_family "{self.write_index(candidate)}" gnupg 2.5.21-r2 x86_64'
+        )
+        self.assertEqual(status, 0)
+
+    def test_rejects_foreign_package_in_candidate_family(self):
+        status, _ = run_helper(
+            f'apkindex_validate_family "{self.write_index()}" gnupg 2.5.21-r2 x86_64'
+        )
+        self.assertNotEqual(status, 0)
+
+    def test_compares_package_sets_independent_of_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            expected = root / "expected"
+            actual = root / "actual"
+            expected.write_text("gpg.apk\ngnupg.apk\n")
+            actual.write_text("gnupg.apk\ngpg.apk\n")
+            status, _ = run_helper(f'package_sets_equal "{expected}" "{actual}"')
+        self.assertEqual(status, 0)
+
+    def test_rejects_different_package_sets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            expected = root / "expected"
+            actual = root / "actual"
+            expected.write_text("gpg.apk\ngnupg.apk\n")
+            actual.write_text("gnupg.apk\n")
+            status, _ = run_helper(f'package_sets_equal "{expected}" "{actual}"')
+        self.assertNotEqual(status, 0)
 
 
 class CallerIsolationTest(unittest.TestCase):
@@ -103,7 +201,7 @@ class CallerIsolationTest(unittest.TestCase):
                 "all_origins >/dev/null\n"
                 "supports_arch x86_64 packages/alpha/APKBUILD || true\n"
                 "apkbuild_pinned_spec packages/alpha >/dev/null\n"
-                "apkbuild_pinned_apk packages/alpha >/dev/null\n"
+                "assert_origin_directory packages/alpha\n"
                 'echo "$origin $arch $name $version"'
             )
             status, out = run_helper(script, cwd=tree)

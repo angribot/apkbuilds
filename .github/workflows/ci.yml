@@ -47,6 +47,7 @@ jobs:
           . scripts/lib.sh
           status=0
           for origin in $(all_origins); do
+            assert_origin_directory "packages/$origin" || status=1
             printf '==> linting %s\n' "$origin"
             (
               cd "packages/$origin"
@@ -69,8 +70,8 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          # Publication skips any package whose .apk already exists, so an
-          # edit that forgets to bump pkgrel would never reach users.
+          # Publication skips a complete declared package family, so an edit
+          # that forgets to bump pkgrel would never reach users.
           . scripts/lib.sh
           status=0
           for origin in $(all_origins); do
@@ -101,55 +102,107 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Build packages missing from the published repository
+      - name: Build packages missing from the published APK repository
         env:
           ARCH: ${{ matrix.arch }}
           BRANCH: ${{ github.ref_name }}
         run: |
           mkdir -p "$RUNNER_TEMP/new"
           # An ephemeral key signs these packages: this job runs upstream
-          # build scripts, so it must never see the release key.
+          # build scripts, so it must never see the repository signing key.
           docker run --rm \
             -e ARCH \
             -e BRANCH \
             -e PUBLISHED="$PAGES_URL/edge/${{ matrix.arch }}" \
             -v "$GITHUB_WORKSPACE:/workspace" \
+            -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \
             -v "$RUNNER_TEMP/new:/new" \
             -w /workspace \
             alpine:edge sh -euxc '
               sh scripts/prepare-builder.sh /new /workspace
               . scripts/lib.sh
+
+              # Published package families are trusted only after their index
+              # is verified with the repository signing key.
+              cp /keys/apkbuilds.rsa.pub /etc/apk/keys/
+              mkdir -p /tmp/published
+              wget -q -T 15 -t 2 \
+                -O /tmp/published/APKINDEX.tar.gz \
+                "$PUBLISHED/APKINDEX.tar.gz"
+              apk verify /tmp/published/APKINDEX.tar.gz
+              tar -xOzf /tmp/published/APKINDEX.tar.gz APKINDEX \
+                > /tmp/published/APKINDEX
+
               su builder -c "abuild-keygen -a -n"
               cp /home/builder/.config/abuild/*.rsa.pub /etc/apk/keys/
               for origin in $(all_origins); do
                 supports_arch "$ARCH" "packages/$origin/APKBUILD" || continue
-                apk="$(apkbuild_pinned_apk "packages/$origin")"
-                # A published .apk means this exact version already shipped.
-                if wget -q -T 15 -t 2 --spider "$PUBLISHED/$apk" 2>/dev/null; then
-                  printf "==> %s already published as %s\n" "$origin" "$apk"
+                assert_origin_directory "packages/$origin"
+                expected="/tmp/expected-$origin"
+                published="/tmp/published-$origin"
+                su builder -c \
+                  "cd /workspace/packages/$origin && abuild listpkg" \
+                  > "$expected"
+                apkindex_origin_apks \
+                  /tmp/published/APKINDEX "$origin" > "$published"
+                if package_sets_equal "$expected" "$published"; then
+                  published_apks="/tmp/published/$origin"
+                  mkdir -p "$published_apks"
+                  while IFS= read -r package; do
+                    downloaded="$published_apks/$package"
+                    wget -q -T 15 -t 2 -O "$downloaded" \
+                      "$PUBLISHED/$package"
+                    apk verify "$downloaded"
+                  done < "$expected"
+                  printf "==> %s package family already published\n" "$origin"
                   continue
                 fi
-                su builder -c "cd /workspace/packages/$origin && REPODEST=/new abuild -r"
+
+                declared=$(apkbuild_field pkgver "packages/$origin/APKBUILD")-r$(
+                  apkbuild_field pkgrel "packages/$origin/APKBUILD"
+                )
+                versions="/tmp/published-versions-$origin"
+                apkindex_origin_versions \
+                  /tmp/published/APKINDEX "$origin" > "$versions"
+                if grep -Fx "$declared" "$versions" >/dev/null; then
+                  printf "%s %s already published with a different package set\n" \
+                    "$origin" "$declared" >&2
+                  exit 1
+                fi
+
+                su builder -c \
+                  "cd /workspace/packages/$origin && REPODEST=\"/new/$origin\" abuild -r"
+                built="/new/$origin/packages/$ARCH"
+                actual="/tmp/actual-$origin"
+                find "$built" -maxdepth 1 -type f -name "*.apk" \
+                  -exec basename {} \; > "$actual"
+                if ! package_sets_equal "$expected" "$actual"; then
+                  printf "%s build produced an incomplete package family\n" \
+                    "$origin" >&2
+                  diff -u "$expected" "$actual" >&2 || true
+                  exit 1
+                fi
+
+                # Installation and package-specific smoke tests happen before
+                # this family becomes a publication candidate.
+                set -- apk add --allow-untrusted --repository "$built"
+                for package in "$built"/*.apk; do set -- "$@" "$package"; done
+                "$@"
+                if [ "$origin" = gnupg ]; then
+                  scripts/test-package.sh \
+                    "$(apkbuild_field pkgver packages/gnupg/APKBUILD)"
+                fi
+                candidate="/new/built/$ARCH/$origin"
+                mkdir -p "$candidate"
+                cp "$built"/*.apk "$candidate/"
               done
-              built="/new/packages/$ARCH"
-              test -d "$built" || exit 0
-              find "$built" -name "*.apk" | sort
-              # Install what was built, unsigned, to catch packages that
-              # build but cannot be installed.
-              set -- apk add --allow-untrusted --repository "$built"
-              for package in "$built"/*.apk; do set -- "$@" "$package"; done
-              "$@"
-              if [ -f /workspace/packages/gnupg/APKBUILD ] &&
-                 [ -f "$built/$(apkbuild_pinned_apk packages/gnupg)" ]; then
-                scripts/test-package.sh "$(apkbuild_field pkgver packages/gnupg/APKBUILD)"
-              fi
             '
       - name: Stage the built packages
         id: stage
         env:
           ARCH: ${{ matrix.arch }}
         run: |
-          built="$RUNNER_TEMP/new/packages/$ARCH"
+          built="$RUNNER_TEMP/new/built/$ARCH"
           if [ -n "$(find "$built" -name '*.apk' -print -quit 2>/dev/null)" ]; then
             echo 'built=true' >> "$GITHUB_OUTPUT"
           else
@@ -160,7 +213,9 @@ jobs:
         if: steps.stage.outputs.built == 'true'
         with:
           name: built-${{ matrix.arch }}
-          path: ${{ runner.temp }}/new/packages/${{ matrix.arch }}/
+          # Keep the architecture directory inside each artifact. Downloads
+          # can then merge one or many artifacts into the same stable layout.
+          path: ${{ runner.temp }}/new/built/
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
@@ -168,12 +223,14 @@ jobs:
   sign:
     needs: build
     if: github.ref_name == github.event.repository.default_branch
+    outputs:
+      snapshot_created: ${{ steps.merge.outputs.merged }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Check out the published repository
+      - name: Check out the published APK repository
         run: |
           git clone --depth 1 --branch gh-pages \
             "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$RUNNER_TEMP/pages"
@@ -182,18 +239,15 @@ jobs:
         with:
           pattern: built-*
           path: ${{ runner.temp }}/built
-      - name: Merge the built packages into the repository
+          merge-multiple: true
+      - name: Find candidate package families
         id: merge
         run: |
-          merged=false
-          for arch in x86_64 aarch64; do
-            source="$RUNNER_TEMP/built/built-$arch"
-            test -d "$source" || continue
-            mkdir -p "$RUNNER_TEMP/pages/edge/$arch"
-            find "$source" -name '*.apk' -exec cp {} "$RUNNER_TEMP/pages/edge/$arch/" \;
-            merged=true
-          done
-          echo "merged=$merged" >> "$GITHUB_OUTPUT"
+          if [ -n "$(find "$RUNNER_TEMP/built" -type f -name '*.apk' -print -quit 2>/dev/null)" ]; then
+            echo 'merged=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'merged=false' >> "$GITHUB_OUTPUT"
+          fi
       - name: Prepare an isolated signer
         if: steps.merge.outputs.merged == 'true'
         run: |
@@ -201,14 +255,84 @@ jobs:
           FROM alpine:edge
           RUN apk add --no-cache abuild
           EOF
-      - name: Sign the repository without network access
+      - name: Validate and merge candidate package families
+        if: steps.merge.outputs.merged == 'true'
+        run: |
+          # Candidate APKs remain untrusted here. Validate them and the signed
+          # baseline before the repository signing key enters any container.
+          docker run --rm --network none \
+            -v "$RUNNER_TEMP/pages:/pages" \
+            -v "$RUNNER_TEMP/built:/built:ro" \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
+            -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \
+            apkbuilds-signer sh -euxc '
+              . /workspace/scripts/lib.sh
+              cp /keys/apkbuilds.rsa.pub /etc/apk/keys/
+              for arch in x86_64 aarch64; do
+                source="/built/$arch"
+                apk_repository="/pages/edge/$arch"
+                apk verify "$apk_repository/APKINDEX.tar.gz"
+                apk verify "$apk_repository"/*.apk
+
+                work=$(mktemp -d)
+                baseline="$work/baseline-APKINDEX"
+                tar -xOzf "$apk_repository/APKINDEX.tar.gz" APKINDEX > "$baseline"
+                apkindex_apks "$baseline" > "$work/indexed"
+                find "$apk_repository" -maxdepth 1 -type f -name "*.apk" \
+                  -exec basename {} \; > "$work/physical"
+                package_sets_equal "$work/indexed" "$work/physical"
+                if ! test -d "$source"; then
+                  rm -rf "$work"
+                  continue
+                fi
+
+                for family in "$source"/*; do
+                  test -d "$family" || continue
+                  origin=${family##*/}
+                  assert_origin_directory "/workspace/packages/$origin"
+                  declared=$(apkbuild_field pkgver \
+                    "/workspace/packages/$origin/APKBUILD")-r$(
+                    apkbuild_field pkgrel "/workspace/packages/$origin/APKBUILD"
+                  )
+                  candidate_index="$work/$origin-APKINDEX.tar.gz"
+                  apk index --no-warnings --quiet \
+                    --output "$candidate_index" \
+                    "$family"/*.apk
+                  tar -xOzf "$candidate_index" APKINDEX \
+                    > "$work/$origin-APKINDEX"
+                  apkindex_validate_family "$work/$origin-APKINDEX" \
+                    "$origin" "$declared" "$arch"
+                  apkindex_origin_apks \
+                    "$work/$origin-APKINDEX" "$origin" \
+                    > "$work/$origin-indexed"
+                  find "$family" -maxdepth 1 -type f -name "*.apk" \
+                    -exec basename {} \; > "$work/$origin-physical"
+                  package_sets_equal \
+                    "$work/$origin-indexed" "$work/$origin-physical"
+
+                  previous="$work/$origin-previous"
+                  apkindex_origin_apks "$baseline" "$origin" > "$previous"
+                  while IFS= read -r package; do
+                    test -f "$apk_repository/$package"
+                    rm -f "$apk_repository/$package"
+                  done < "$previous"
+                  for candidate in "$family"/*.apk; do
+                    package=${candidate##*/}
+                    test ! -e "$apk_repository/$package"
+                    cp "$candidate" "$apk_repository/"
+                  done
+                done
+                rm -rf "$work"
+              done
+            '
+      - name: Sign the APK repository without network access
         if: steps.merge.outputs.merged == 'true'
         env:
           ABUILD_PRIVATE_KEY: ${{ secrets.ABUILD_PRIVATE_KEY }}
         run: |
-          # --network none keeps the release key away from anything that could
-          # exfiltrate it. Signing is architecture-independent, so one runner
-          # signs both trees.
+          # --network none keeps the repository signing key away from anything
+          # that could exfiltrate it. Signing is architecture-independent, so
+          # one runner signs both trees.
           docker run --rm --network none \
             -e ABUILD_PRIVATE_KEY \
             -v "$RUNNER_TEMP/pages:/pages" \
@@ -222,9 +346,9 @@ jobs:
               trap "rm -f /tmp/apkbuilds.rsa" EXIT
               cp /keys/apkbuilds.rsa.pub /etc/apk/keys/
               for arch in x86_64 aarch64; do
-                repository="/pages/edge/$arch"
-                test -d "$repository" || continue
-                for package in "$repository"/*.apk; do
+                apk_repository="/pages/edge/$arch"
+                test -d "$apk_repository" || continue
+                for package in "$apk_repository"/*.apk; do
                   # Already-published packages carry a valid signature.
                   apk verify "$package" && continue
                   work=$(mktemp -d)
@@ -239,7 +363,7 @@ jobs:
                   )
                   rm -rf "$work"
                 done
-                cd "$repository"
+                cd "$apk_repository"
                 rm -f APKINDEX.tar.gz Packages.adb
                 apk index --no-warnings --quiet \
                   --output APKINDEX.tar.gz \
@@ -251,19 +375,29 @@ jobs:
                   APKINDEX.tar.gz
               done
             '
-      - name: Verify the repository without the private key
+      - name: Verify the APK repository without the private key
         if: steps.merge.outputs.merged == 'true'
         run: |
-          docker run --rm \
+          docker run --rm --network none \
             -v "$RUNNER_TEMP/pages:/pages:ro" \
+            -v "$GITHUB_WORKSPACE/scripts/lib.sh:/scripts/lib.sh:ro" \
             -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \
             alpine:edge sh -euxc '
+              . /scripts/lib.sh
               cp /keys/apkbuilds.rsa.pub /etc/apk/keys/
               for arch in x86_64 aarch64; do
-                repository="/pages/edge/$arch"
-                test -d "$repository" || continue
-                apk verify "$repository/APKINDEX.tar.gz"
-                apk verify "$repository"/*.apk
+                apk_repository="/pages/edge/$arch"
+                test -d "$apk_repository" || continue
+                apk verify "$apk_repository/APKINDEX.tar.gz"
+                apk verify "$apk_repository"/*.apk
+                work=$(mktemp -d)
+                tar -xOzf "$apk_repository/APKINDEX.tar.gz" APKINDEX \
+                  > "$work/APKINDEX"
+                apkindex_apks "$work/APKINDEX" > "$work/indexed"
+                find "$apk_repository" -maxdepth 1 -type f -name "*.apk" \
+                  -exec basename {} \; > "$work/physical"
+                package_sets_equal "$work/indexed" "$work/physical"
+                rm -rf "$work"
               done
             '
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -272,7 +406,7 @@ jobs:
           name: signed-repository
           # include-hidden-files is needed for .nojekyll, which also drags in
           # the clone's .git; publish builds its own orphan commit and would
-          # fail on an existing repository.
+          # fail on surviving Git metadata.
           path: |
             ${{ runner.temp }}/pages/
             !${{ runner.temp }}/pages/.git
@@ -281,50 +415,9 @@ jobs:
           retention-days: 1
           compression-level: 0
 
-  publish:
-    needs: sign
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    outputs:
-      published: ${{ steps.push.outputs.published }}
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        id: download
-        continue-on-error: true
-        with:
-          name: signed-repository
-          path: pages
-      - name: Push the repository to gh-pages
-        id: push
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ '${{ steps.download.outcome }}' != success ]; then
-            echo 'no new packages to publish'
-            echo 'published=false' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          cd pages
-          # The artifact comes from a clone, so drop any repository metadata
-          # that survived upload before building the orphan commit.
-          rm -rf .git
-          git init -q --initial-branch=gh-pages
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git remote add origin \
-            "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git"
-          git add -A
-          # A single orphan commit keeps the branch from accumulating the
-          # history of every .apk ever published.
-          git commit -q -m "Publish $GITHUB_SHA"
-          git push -q --force origin gh-pages
-          echo 'published=true' >> "$GITHUB_OUTPUT"
-
   verify:
-    needs: publish
-    if: needs.publish.outputs.published == 'true'
+    needs: sign
+    if: needs.sign.outputs.snapshot_created == 'true'
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -337,24 +430,25 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Install every package at its exact version from Pages
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: signed-repository
+          path: ${{ runner.temp }}/pages
+      - name: Install every declared build from the staged snapshot
         run: |
           docker run --rm \
-            -e PAGES_URL \
-            -v "$GITHUB_WORKSPACE:/workspace" \
+            -v "$RUNNER_TEMP/pages:/pages:ro" \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
             -w /workspace \
             alpine:edge sh -euxc '
               . scripts/lib.sh
-              # Pages serves the new commit asynchronously, so poll for it.
-              for delay in 0 5 10 20 40 60; do
-                sleep "$delay"
-                wget -q -T 15 -t 2 -O /etc/apk/keys/apkbuilds.rsa.pub \
-                  "$PAGES_URL/apkbuilds.rsa.pub" && break
-              done
-              echo "$PAGES_URL/edge" >> /etc/apk/repositories
+              cp /pages/apkbuilds.rsa.pub \
+                /etc/apk/keys/apkbuilds.rsa.pub
+              echo "/pages/edge" >> /etc/apk/repositories
               set -- apk add
               for origin in $(all_origins); do
-                supports_arch "${{ matrix.arch }}" "packages/$origin/APKBUILD" || continue
+                supports_arch "${{ matrix.arch }}" \
+                  "packages/$origin/APKBUILD" || continue
                 set -- "$@" "$(apkbuild_pinned_spec "packages/$origin")"
               done
               for delay in 0 5 10 20 40 60; do
@@ -363,3 +457,33 @@ jobs:
               done
               exit 1
             '
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: signed-repository
+          path: pages
+      - name: Push the APK repository to gh-pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd pages
+          # The artifact comes from a clone, so drop any Git metadata
+          # that survived upload before building the orphan commit.
+          rm -rf .git
+          git init -q --initial-branch=gh-pages
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add origin \
+            "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git"
+          git add -A
+          # A single orphan commit keeps the branch from accumulating the
+          # history of every .apk ever published.
+          git commit -q -m "Publish $GITHUB_SHA"
+          git push -q --force origin gh-pages

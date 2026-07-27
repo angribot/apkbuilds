@@ -8,15 +8,15 @@ SPEC.loader.exec_module(update)
 
 
 class UpdateTest(unittest.TestCase):
-    def test_latest_version_ignores_non_release_files(self):
+    def test_newest_eligible_version_ignores_ineligible_files(self):
         index = '<a href="gnupg-2.5.9.tar.bz2">x</a><a href="gnupg-2.5.10.tar.bz2">x</a><a href="gnupg-2.6.0-beta.tar.bz2">x</a>'
-        self.assertEqual(update.latest_version(index), "2.5.10")
+        self.assertEqual(update.newest_eligible_version(index), "2.5.10")
 
-    def test_latest_version_rejects_empty_index(self):
-        with self.assertRaisesRegex(ValueError, "no stable releases"):
-            update.latest_version("")
+    def test_newest_eligible_version_rejects_empty_index(self):
+        with self.assertRaisesRegex(ValueError, "no eligible upstream releases"):
+            update.newest_eligible_version("")
 
-    def test_update_resets_release_and_checksum(self):
+    def test_update_resets_revision_and_checksum(self):
         text = "pkgver=2.4.9\npkgrel=3\n" + "a" * 128 + "  gnupg-2.4.9.tar.bz2\n"
         result = update.updated_apkbuild(text, "2.5.21", "b" * 128)
         self.assertIn("pkgver=2.5.21\npkgrel=0", result)

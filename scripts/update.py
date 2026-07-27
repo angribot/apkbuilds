@@ -38,14 +38,14 @@ def download(url):
     raise last_error
 
 
-def latest_version(index):
+def newest_eligible_version(index):
     versions = set(re.findall(r'href="gnupg-(\d+\.\d+\.\d+)\.tar\.bz2"', index))
     if not versions:
-        raise ValueError("no stable releases found")
+        raise ValueError("no eligible upstream releases found")
     return max(versions, key=lambda value: tuple(map(int, value.split("."))))
 
 
-def current_version(text):
+def declared_version(text):
     match = re.search(r"^pkgver=(\d+\.\d+\.\d+)$", text, re.MULTILINE)
     if not match:
         raise ValueError("pkgver not found")
@@ -53,7 +53,7 @@ def current_version(text):
 
 
 def updated_apkbuild(text, version, digest):
-    old = current_version(text)
+    old = declared_version(text)
     text = re.sub(r"^pkgver=.*$", f"pkgver={version}", text, count=1, flags=re.MULTILINE)
     text = re.sub(r"^pkgrel=.*$", "pkgrel=0", text, count=1, flags=re.MULTILINE)
     pattern = rf"^[0-9a-f]{{128}}  gnupg-{re.escape(old)}\.tar\.bz2$"
@@ -93,8 +93,8 @@ def main():
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     text = APKBUILD.read_text()
-    version = latest_version(download(f"{BASE}/").decode())
-    if version == current_version(text):
+    version = newest_eligible_version(download(f"{BASE}/").decode())
+    if version == declared_version(text):
         print(version)
         return
     source = download(f"{BASE}/gnupg-{version}.tar.bz2")
