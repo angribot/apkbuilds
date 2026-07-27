@@ -270,7 +270,12 @@ jobs:
         if: steps.merge.outputs.merged == 'true'
         with:
           name: signed-repository
-          path: ${{ runner.temp }}/pages/
+          # include-hidden-files is needed for .nojekyll, which also drags in
+          # the clone's .git; publish builds its own orphan commit and would
+          # fail on an existing repository.
+          path: |
+            ${{ runner.temp }}/pages/
+            !${{ runner.temp }}/pages/.git
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
@@ -302,6 +307,9 @@ jobs:
             exit 0
           fi
           cd pages
+          # The artifact comes from a clone, so drop any repository metadata
+          # that survived upload before building the orphan commit.
+          rm -rf .git
           git init -q --initial-branch=gh-pages
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
