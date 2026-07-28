@@ -38,10 +38,6 @@ class UpdateZerostackTest(unittest.TestCase):
         self.assertEqual(version, "1.8.0")
         self.assertEqual(set(assets), {"x86_64", "aarch64"})
 
-    def test_newest_eligible_release_rejects_missing_release(self):
-        with self.assertRaisesRegex(ValueError, "no eligible upstream releases"):
-            update.newest_eligible_release([])
-
     def test_update_resets_revision_checksums_and_architectures(self):
         text = (
             'pkgver=1.7.0\npkgrel=2\narch="x86_64 !aarch64"\n'

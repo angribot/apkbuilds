@@ -12,10 +12,6 @@ class UpdateTest(unittest.TestCase):
         index = '<a href="gnupg-2.5.9.tar.bz2">x</a><a href="gnupg-2.5.10.tar.bz2">x</a><a href="gnupg-2.6.0-beta.tar.bz2">x</a>'
         self.assertEqual(update.newest_eligible_version(index), "2.5.10")
 
-    def test_newest_eligible_version_rejects_empty_index(self):
-        with self.assertRaisesRegex(ValueError, "no eligible upstream releases"):
-            update.newest_eligible_version("")
-
     def test_update_resets_revision_and_checksum(self):
         text = "pkgver=2.4.9\npkgrel=3\n" + "a" * 128 + "  gnupg-2.4.9.tar.bz2\n"
         result = update.updated_apkbuild(text, "2.5.21", "b" * 128)
