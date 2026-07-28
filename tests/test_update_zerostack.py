@@ -42,16 +42,19 @@ class UpdateZerostackTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no eligible upstream releases"):
             update.newest_eligible_release([])
 
-    def test_update_resets_revision_and_both_checksums(self):
+    def test_update_resets_revision_checksums_and_architectures(self):
         text = (
-            "pkgver=1.7.0\npkgrel=2\ncase \"$CARCH\" in\n"
+            'pkgver=1.7.0\npkgrel=2\narch="x86_64 !aarch64"\n'
+            "case \"$CARCH\" in\n"
             f"x86_64)\n\t_sha512=\"{'a' * 128}\"\n\t;;\n"
             f"aarch64)\n\t_sha512=\"{'b' * 128}\"\n\t;;\nesac\n"
         )
-        result = update.updated_apkbuild(
-            text, "1.8.0", {"x86_64": "c" * 128, "aarch64": "d" * 128}
-        )
-        self.assertIn("pkgver=1.8.0\npkgrel=0", result)
+        digests = {"x86_64": "c" * 128, "aarch64": "d" * 128}
+        excluded_arch_result = update.updated_apkbuild(text, "1.7.2", digests)
+        self.assertIn('arch="x86_64 !aarch64"', excluded_arch_result)
+
+        result = update.updated_apkbuild(text, "1.8.0", digests)
+        self.assertIn('pkgver=1.8.0\npkgrel=0\narch="x86_64 aarch64"', result)
         self.assertIn(f'x86_64)\n\t_sha512="{"c" * 128}"', result)
         self.assertIn(f'aarch64)\n\t_sha512="{"d" * 128}"', result)
 

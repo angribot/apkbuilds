@@ -15,6 +15,9 @@ ASSETS = {
     "x86_64": "zerostack-x86_64-unknown-linux-musl.tar.gz",
     "aarch64": "zerostack-aarch64-unknown-linux-musl.tar.gz",
 }
+FAILED_ARCHITECTURES_BY_VERSION = {
+    "1.7.2": {"aarch64"},  # https://github.com/angribot/apkbuilds/issues/35
+}
 ROOT = Path(__file__).resolve().parents[1]
 APKBUILD = ROOT / "packages/zerostack/APKBUILD"
 
@@ -87,6 +90,15 @@ def verified_sha512(data, github_digest):
 def updated_apkbuild(text, version, digests):
     text = re.sub(r"^pkgver=.*$", f"pkgver={version}", text, count=1, flags=re.MULTILINE)
     text = re.sub(r"^pkgrel=.*$", "pkgrel=0", text, count=1, flags=re.MULTILINE)
+    failed_architectures = FAILED_ARCHITECTURES_BY_VERSION.get(version, set())
+    supported = [arch for arch in ASSETS if arch not in failed_architectures]
+    excluded = [f"!{arch}" for arch in ASSETS if arch not in supported]
+    declaration = " ".join(supported + excluded)
+    text, count = re.subn(
+        r'^arch="[^"]*"$', f'arch="{declaration}"', text, count=1, flags=re.MULTILINE
+    )
+    if count != 1:
+        raise ValueError("architecture declaration not found")
     for arch in ASSETS:
         digest = digests.get(arch, "")
         if not re.fullmatch(r"[0-9a-f]{128}", digest):
