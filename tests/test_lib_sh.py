@@ -1,10 +1,4 @@
-"""Tests for scripts/lib.sh.
-
-Scope rule: cover only helpers whose failure leaves CI green while behaviour
-is wrong. Package-family parsing and comparison decide whether publication
-skips, rejects, or replaces a build. Mistakes that abort abuild or `apk verify`
-need no test here because the workflow already turns red.
-"""
+"""Tests for scripts/lib.sh."""
 
 import pathlib
 import subprocess
@@ -27,8 +21,6 @@ def run_helper(script, cwd=None):
 
 
 class ApkbuildFieldTest(unittest.TestCase):
-    """The field reader feeds every version pin and filename."""
-
     def write_apkbuild(self, body):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -37,8 +29,6 @@ class ApkbuildFieldTest(unittest.TestCase):
         return origin
 
     def test_strips_surrounding_quotes(self):
-        # A leaked quote would produce `demo="2.5.21"-r3`, which never matches
-        # a published filename, so the package rebuilds on every run.
         origin = self.write_apkbuild('pkgname="demo"\npkgver="2.5.21"\npkgrel=\'3\'\n')
         status, out = run_helper(f'apkbuild_pinned_spec "{origin}"')
         self.assertEqual(status, 0)
