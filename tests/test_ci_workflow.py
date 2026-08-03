@@ -5,10 +5,13 @@ Real APK parsing, installation, and signing remain integration checks in CI.
 """
 
 import pathlib
+import subprocess
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKFLOW = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+MERGER_PATH = ROOT / "scripts" / "merge-package-families.sh"
+MERGER = MERGER_PATH.read_text()
 
 
 class PackageOriginBuildTest(unittest.TestCase):
@@ -31,24 +34,36 @@ class PackageOriginBuildTest(unittest.TestCase):
         self.assertIn('/new/built/$ARCH/$origin', WORKFLOW)
         self.assertIn("path: ${{ runner.temp }}/new/built/", WORKFLOW)
         self.assertIn("merge-multiple: true", WORKFLOW)
-        self.assertIn('source="/built/$arch"', WORKFLOW)
+        self.assertIn('source="$built/$arch"', MERGER)
 
 
 class PackageOriginReplacementTest(unittest.TestCase):
+    def test_workflow_runs_merger_without_network_access(self):
+        merge_step = WORKFLOW.index("- name: Validate and merge candidate package families")
+        signing_step = WORKFLOW.index(
+            "- name: Sign the APK repository without network access", merge_step
+        )
+        merge_workflow = WORKFLOW[merge_step:signing_step]
+        self.assertIn("docker run --rm --network none", merge_workflow)
+        self.assertIn("/workspace/scripts/merge-package-families.sh", merge_workflow)
+
+    def test_merger_is_valid_shell(self):
+        completed = subprocess.run(
+            ["sh", "-n", str(MERGER_PATH)], capture_output=True, text=True
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
     def test_candidate_is_validated_before_published_family_is_removed(self):
-        validation = WORKFLOW.index("apkindex_validate_family")
-        removal = WORKFLOW.index('rm -f "$apk_repository/$package"')
-        copying = WORKFLOW.index('cp "$candidate" "$apk_repository/"')
+        validation = MERGER.index("apkindex_validate_family")
+        removal = MERGER.index('rm -f "$apk_repository/$package"')
+        copying = MERGER.index('cp "$candidate" "$apk_repository/"')
         self.assertLess(validation, removal)
         self.assertLess(removal, copying)
 
     def test_published_family_comes_from_verified_index(self):
-        sign_job = WORKFLOW.index("\n  sign:")
-        verification = WORKFLOW.index(
-            'apk verify "$apk_repository/APKINDEX.tar.gz"', sign_job
-        )
-        extraction = WORKFLOW.index("APKINDEX.tar.gz\" APKINDEX", verification)
-        family_lookup = WORKFLOW.index("apkindex_origin_apks", extraction)
+        verification = MERGER.index('apk verify "$apk_repository/APKINDEX.tar.gz"')
+        extraction = MERGER.index("APKINDEX.tar.gz\" APKINDEX", verification)
+        family_lookup = MERGER.index("apkindex_origin_apks", extraction)
         self.assertLess(verification, extraction)
         self.assertLess(extraction, family_lookup)
 
@@ -59,10 +74,9 @@ class PackageOriginReplacementTest(unittest.TestCase):
         self.assertIn('supports_arch "$ARCH" "packages/$origin/APKBUILD" || continue', WORKFLOW)
 
     def test_every_architecture_baseline_is_verified_during_publication(self):
-        merge_step = WORKFLOW.index("- name: Validate and merge candidate package families")
-        source_guard = WORKFLOW.index('if ! test -d "$source"', merge_step)
-        baseline_verification = WORKFLOW.index(
-            'apk verify "$apk_repository/APKINDEX.tar.gz"', merge_step
+        source_guard = MERGER.index('if ! test -d "$source"')
+        baseline_verification = MERGER.index(
+            'apk verify "$apk_repository/APKINDEX.tar.gz"'
         )
         self.assertLess(baseline_verification, source_guard)
 
