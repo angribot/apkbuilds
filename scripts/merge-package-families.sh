@@ -40,7 +40,11 @@ for arch in x86_64 aarch64; do
       apkbuild_field pkgrel "$workspace/packages/$origin/APKBUILD"
     )
     candidate_index="$work/$origin-APKINDEX.tar.gz"
-    apk index --no-warnings --quiet \
+    # Candidates carry the untrusted build key's signature; only their
+    # structure is validated here, never their authenticity. The repository
+    # signing key re-signs them later and the final verification step checks
+    # exactly that signature.
+    apk index --no-warnings --quiet --allow-untrusted \
       --output "$candidate_index" \
       "$family"/*.apk
     tar -xOzf "$candidate_index" APKINDEX \

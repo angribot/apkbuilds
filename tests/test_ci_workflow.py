@@ -38,6 +38,14 @@ class PackageOriginBuildTest(unittest.TestCase):
 
 
 class PackageOriginReplacementTest(unittest.TestCase):
+    def test_candidate_indexing_accepts_untrusted_signatures(self):
+        # Candidates arrive signed with the ephemeral build key, which the
+        # network-isolated signer must not trust. The candidate index serves
+        # structural validation only; the repository signing key re-signs the
+        # packages later, and the final verification step checks that key.
+        candidate_index = MERGER.index("apk index --no-warnings --quiet")
+        self.assertIn("--allow-untrusted", MERGER[candidate_index:])
+
     def test_workflow_runs_merger_without_network_access(self):
         merge_step = WORKFLOW.index("- name: Validate and merge candidate package families")
         signing_step = WORKFLOW.index(
