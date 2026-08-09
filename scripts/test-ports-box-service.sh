@@ -7,6 +7,11 @@ set -eu
 
 apk add --no-cache openrc
 
+# OpenRC's svc_lock needs /run/openrc; a container without init may
+# lack it (post-install doesn't create it).
+mkdir -p /run/openrc
+ls -ld /run /run/openrc || true
+
 # Without a config the init script's start_pre() must fail the start with a
 # readable error before any daemon is launched.
 if output=$(rc-service ports-box start 2>&1); then
