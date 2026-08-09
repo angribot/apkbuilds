@@ -30,5 +30,7 @@ apk upgrade zerostack  # or: apk upgrade gnupg
 The APK repository contains GnuPG's complete package family. The `gpg` package
 provides the minimal OpenPGP command-line tools, while the `gnupg` metapackage
 installs the full suite. The `zerostack` package installs the full upstream CLI.
-Runtime and build dependencies continue to come from Alpine edge, so stable
-Alpine releases are not supported.
+The `ports-box` package installs the TCP/UDP port forwarder, built from source
+with Alpine's Rust toolchain, and its example configuration. Runtime and build
+dependencies continue to come from Alpine edge, so stable Alpine releases are
+not supported.
