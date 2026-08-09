@@ -23,10 +23,10 @@ check() {
 }
 
 package() {
-	binary="$srcdir/target/release/ports-box"
+	binary="$builddir/target/release/ports-box"
 	test "$("$binary" --version)" = "ports-box $pkgver"
 	install -Dm755 "$binary" "$pkgdir/usr/bin/ports-box"
-	install -Dm644 "$srcdir/config.example.json" \
+	install -Dm644 "$builddir/config.example.json" \
 		"$pkgdir/usr/share/doc/ports-box/config.example.json"
 }
 
