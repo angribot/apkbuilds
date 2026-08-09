@@ -11,7 +11,9 @@
 set -eu
 
 # Without a config the daemon must fail cleanly with a readable error.
-if output=$(ports-box -c /nonexistent/config.json -d /nonexistent 2>&1); then
+# Use the package-created workdir so the daemon gets past the chdir step
+# and reaches the config-load step that we're actually testing.
+if output=$(ports-box -c /nonexistent/config.json -d /var/lib/ports-box 2>&1); then
   echo "expected daemon to fail without a config; got:" >&2
   echo "$output" >&2
   exit 1
