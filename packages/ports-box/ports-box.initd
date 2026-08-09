@@ -1,0 +1,18 @@
+#!/sbin/openrc-run
+
+name=$RC_SVCNAME
+description="ports-box TCP/UDP port forwarder"
+supervisor="supervise-daemon"
+command="/usr/bin/ports-box"
+command_args="-c /etc/ports-box/config.json -d /var/lib/ports-box"
+
+depend() {
+	after net dns
+}
+
+start_pre() {
+	[ -f /etc/ports-box/config.json ] || {
+		eerror "ports-box config /etc/ports-box/config.json not found"
+		return 1
+	}
+}

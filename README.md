@@ -31,6 +31,17 @@ The APK repository contains GnuPG's complete package family. The `gpg` package
 provides the minimal OpenPGP command-line tools, while the `gnupg` metapackage
 installs the full suite. The `zerostack` package installs the full upstream CLI.
 The `ports-box` package installs the TCP/UDP port forwarder, built from source
-with Alpine's Rust toolchain, and its example configuration. Runtime and build
-dependencies continue to come from Alpine edge, so stable Alpine releases are
-not supported.
+with Alpine's Rust toolchain, and its example configuration. Installing
+`ports-box-openrc` (automatic on systems with OpenRC) adds an init script.
+To start it:
+
+```sh
+mkdir -p /etc/ports-box
+cp /usr/share/doc/ports-box/config.example.json /etc/ports-box/config.json
+# edit /etc/ports-box/config.json to taste
+rc-service ports-box start
+```
+
+The service refuses to start without a config, so a fresh install forwards
+nothing until you provide one. Runtime and build dependencies continue to
+come from Alpine edge, so stable Alpine releases are not supported.

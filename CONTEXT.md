@@ -22,6 +22,11 @@ _Avoid_: Package, artifact
 **Split package**:
 One of multiple packages produced by the same package origin.
 
+**Service subpackage**:
+A split package providing an init script for a package's daemon, installed
+when OpenRC is present.
+_Avoid_: OpenRC package
+
 **Package family**:
 The complete APK set produced by one package origin at one package version and
 revision for one architecture.
