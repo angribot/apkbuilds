@@ -18,11 +18,11 @@ options="!strip"
 source="zerostack-$pkgver.tar.gz::https://github.com/gi-dellav/zerostack/archive/refs/tags/v$pkgver.tar.gz"
 
 build() {
-	cargo build --release --locked
+	cargo build --release
 }
 
 check() {
-	cargo test --locked
+	cargo test
 }
 
 package() {
