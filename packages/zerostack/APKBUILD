@@ -1,6 +1,6 @@
 pkgname=zerostack
 pkgver=1.7.2
-pkgrel=0
+pkgrel=3
 pkgdesc="Minimalistic coding agent written in Rust"
 url="https://github.com/gi-dellav/zerostack"
 arch="x86_64 aarch64"
