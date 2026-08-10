@@ -19,12 +19,17 @@ makedepends="
 options="!check !strip"
 source="zerostack-$pkgver.tar.gz::https://github.com/gi-dellav/zerostack/archive/refs/tags/v$pkgver.tar.gz"
 
+prepare() {
+	default_prepare
+	cargo fetch --target="$CTARGET" --locked
+}
+
 build() {
-	cargo build --release
+	cargo build --frozen --release
 }
 
 check() {
-	cargo test
+	cargo test --frozen
 }
 
 package() {
