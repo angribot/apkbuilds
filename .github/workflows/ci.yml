@@ -101,6 +101,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has_origins: ${{ steps.set-matrix.outputs.has_origins }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -134,10 +135,17 @@ jobs:
               fi
             done
           done
-          echo "matrix={\"include\":[$items]}" >> "$GITHUB_OUTPUT"
+          if [ -z "$items" ]; then
+            echo "has_origins=false" >> "$GITHUB_OUTPUT"
+            echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
+          else
+            echo "has_origins=true" >> "$GITHUB_OUTPUT"
+            echo "matrix={\"include\":[$items]}" >> "$GITHUB_OUTPUT"
+          fi
 
   build:
     needs: [check, plan]
+    if: needs.plan.outputs.has_origins == 'true'
     timeout-minutes: 90
     strategy:
       fail-fast: false
