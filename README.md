@@ -1,8 +1,8 @@
 # Alpine packages
 
-Signed GnuPG and zerostack packages automatically tracking eligible upstream
-releases for Alpine Linux edge. GnuPG is built from source; zerostack uses
-upstream's static musl binaries.
+Signed packages that automatically track eligible upstream releases for Alpine
+Linux edge. Each package origin defines whether it is built from source or uses
+authenticated upstream binaries.
 
 Project-supported architectures: `x86_64` and `aarch64`. Each package family
 is published atomically per architecture. An origin-unsupported architecture
@@ -17,31 +17,18 @@ wget -q https://angribot.github.io/apkbuilds/apkbuilds.rsa.pub \
   -O /etc/apk/keys/apkbuilds.rsa.pub
 echo "https://angribot.github.io/apkbuilds/edge" >> /etc/apk/repositories
 apk update
-apk add zerostack  # or: apk add gnupg
+apk add PACKAGE_NAME
 ```
 
 To upgrade an existing installation:
 
 ```sh
 apk update
-apk upgrade zerostack  # or: apk upgrade gnupg
+apk upgrade PACKAGE_NAME
 ```
 
-The APK repository contains GnuPG's complete package family. The `gpg` package
-provides the minimal OpenPGP command-line tools, while the `gnupg` metapackage
-installs the full suite. The `zerostack` package installs the full upstream CLI.
-The `ports-box` package installs the TCP/UDP port forwarder, built from source
-with Alpine's Rust toolchain, and its example configuration. Installing
-`ports-box-openrc` (automatic on systems with OpenRC) adds an init script.
-To start it:
+Package origins and package-specific files are maintained under
+[`packages/`](packages/).
 
-```sh
-mkdir -p /etc/ports-box
-cp /usr/share/doc/ports-box/config.example.json /etc/ports-box/config.json
-# edit /etc/ports-box/config.json to taste
-rc-service ports-box start
-```
-
-The service refuses to start without a config, so a fresh install forwards
-nothing until you provide one. Runtime and build dependencies continue to
-come from Alpine edge, so stable Alpine releases are not supported.
+Runtime and build dependencies continue to come from Alpine edge, so stable
+Alpine releases are not supported.
