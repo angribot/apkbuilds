@@ -12,9 +12,10 @@ echo 'permit nopass builder as root' > /etc/doas.d/builder.conf
 for directory in "$@"; do
   chown -R builder:builder "$directory"
 done
-# Enable ccache for abuild so persistent cache volumes speed up repeat builds.
-mkdir -p /home/builder/.abuild
-cat >> /home/builder/.abuild/abuild.conf <<'CCACHE'
+# Write abuild user config to the XDG path (~/.config/abuild) so abuild
+# sees it without an explicit ABUILD_USERDIR override.
+mkdir -p /home/builder/.config/abuild
+cat >> /home/builder/.config/abuild/abuild.conf <<'CCACHE'
 USE_CCACHE=1
 CCACHE_DIR=/home/builder/.cache/ccache
 CCACHE
