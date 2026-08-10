@@ -153,6 +153,19 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Restore source distfiles
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.cache/distfiles
+          key: apkbuilds-distfiles-${{ matrix.arch }}-${{ matrix.origin }}-${{ hashFiles(format('packages/{0}/APKBUILD', matrix.origin)) }}
+          restore-keys: apkbuilds-distfiles-${{ matrix.arch }}-${{ matrix.origin }}-
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.cache/ccache-${{ matrix.origin }}
+          key: apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-
       - name: Build packages missing from the published APK repository
         env:
           ARCH: ${{ matrix.arch }}
@@ -160,6 +173,7 @@ jobs:
           BRANCH: ${{ github.ref_name }}
         run: |
           mkdir -p "$RUNNER_TEMP/new"
+          mkdir -p .cache/distfiles .cache/ccache-${{ matrix.origin }}
           # An ephemeral key signs these packages: this job runs upstream
           # build scripts, so it must never see the repository signing key.
           docker run --rm \
@@ -170,6 +184,8 @@ jobs:
             -v "$GITHUB_WORKSPACE:/workspace" \
             -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \
             -v "$RUNNER_TEMP/new:/new" \
+            -v "$GITHUB_WORKSPACE/.cache/distfiles:/var/cache/distfiles" \
+            -v "$GITHUB_WORKSPACE/.cache/ccache-${{ matrix.origin }}:/home/builder/.cache/ccache" \
             -w /workspace \
             alpine:edge sh -euxc '
               sh scripts/prepare-builder.sh /new /workspace
@@ -252,6 +268,16 @@ jobs:
               mkdir -p "$candidate"
               cp "$built"/*.apk "$candidate/"
             '
+      - name: Save distfiles cache
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.cache/distfiles
+          key: apkbuilds-distfiles-${{ matrix.arch }}-${{ matrix.origin }}-${{ hashFiles(format('packages/{0}/APKBUILD', matrix.origin)) }}
+      - name: Save ccache
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.cache/ccache-${{ matrix.origin }}
+          key: apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-${{ github.run_id }}
       - name: Stage the built packages
         id: stage
         run: |
