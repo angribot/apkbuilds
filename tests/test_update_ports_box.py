@@ -2,13 +2,17 @@ import hashlib
 import importlib.util
 import json
 import pathlib
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+SCRIPTS = Path(__file__).parents[1] / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+
 SPEC = importlib.util.spec_from_file_location(
-    "update_ports_box", Path(__file__).parents[1] / "scripts/update-ports-box.py"
+    "update_ports_box", SCRIPTS / "update-ports-box.py"
 )
 update = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(update)

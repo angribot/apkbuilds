@@ -1,19 +1,21 @@
-import hashlib
 import importlib.util
+import sys
 import unittest
 from pathlib import Path
-from unittest import mock
+
+SCRIPTS = Path(__file__).parents[1] / "scripts"
+sys.path.insert(0, str(SCRIPTS))
 
 SPEC = importlib.util.spec_from_file_location(
-    "update_zerostack", Path(__file__).parents[1] / "scripts/update-zerostack.py"
+    "update_zerostack", SCRIPTS / "update-zerostack.py"
 )
 update = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(update)
 
-ASSETS = list(update.ASSETS.values())
+ASSET_NAMES = [a.name for a in update.ASSETS.values()]
 
 
-def release(tag, assets=ASSETS, **values):
+def release(tag, assets=ASSET_NAMES, **values):
     result = {
         "tag_name": tag,
         "draft": False,
@@ -30,7 +32,7 @@ class UpdateZerostackTest(unittest.TestCase):
             [
                 release("v2.0.0-rc1"),
                 release("v1.10.0", prerelease=True),
-                release("v1.9.0", assets=ASSETS[:1]),
+                release("v1.9.0", assets=ASSET_NAMES[:1]),
                 release("v1.8.0"),
                 release("v1.7.0"),
             ]
@@ -53,24 +55,6 @@ class UpdateZerostackTest(unittest.TestCase):
         self.assertIn('pkgver=1.8.0\npkgrel=0\narch="x86_64 aarch64"', result)
         self.assertIn(f'x86_64)\n\t_sha512="{"c" * 128}"', result)
         self.assertIn(f'aarch64)\n\t_sha512="{"d" * 128}"', result)
-
-    def test_verified_sha512_rejects_github_digest_mismatch(self):
-        data = b"release asset"
-        digest = f"sha256:{hashlib.sha256(data).hexdigest()}"
-        self.assertEqual(update.verified_sha512(data, digest), hashlib.sha512(data).hexdigest())
-        with self.assertRaisesRegex(ValueError, "digest mismatch"):
-            update.verified_sha512(data, "sha256:" + "0" * 64)
-
-    @mock.patch.dict(update.os.environ, {"GITHUB_TOKEN": "secret"})
-    @mock.patch.object(update.urllib.request, "urlopen")
-    def test_download_sends_token_only_to_github_api(self, urlopen):
-        urlopen.return_value.__enter__.return_value.read.return_value = b""
-        update.download("https://api.github.com/repos/example/releases")
-        self.assertEqual(
-            urlopen.call_args.args[0].get_header("Authorization"), "Bearer secret"
-        )
-        update.download("https://github.com/example/releases/download/asset")
-        self.assertIsNone(urlopen.call_args.args[0].get_header("Authorization"))
 
 
 if __name__ == "__main__":

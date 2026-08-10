@@ -2,48 +2,15 @@
 import argparse
 import hashlib
 import json
-import os
 import re
-import time
-import urllib.request
-from urllib.error import HTTPError, URLError
 from pathlib import Path
+
+from update import bump_apkbuild_version, declared_version, download, version_key
 
 UPSTREAM_REPOSITORY = "https://github.com/Yuu518/ports-box"
 RELEASES = "https://api.github.com/repos/Yuu518/ports-box/releases?per_page=100"
 ROOT = Path(__file__).resolve().parents[1]
 APKBUILD = ROOT / "packages/ports-box/APKBUILD"
-
-
-def download(url):
-    headers = {"User-Agent": "apkbuilds-updater"}
-    if url.startswith("https://api.github.com/") and os.environ.get("GITHUB_TOKEN"):
-        headers["Authorization"] = f"Bearer {os.environ['GITHUB_TOKEN']}"
-    request = urllib.request.Request(url, headers=headers)
-    for attempt in range(3):
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return response.read()
-        except HTTPError as error:
-            if error.code not in (408, 429) and not 500 <= error.code < 600:
-                raise
-            last_error = error
-        except (TimeoutError, URLError) as error:
-            last_error = error
-        if attempt < 2:
-            time.sleep(2**attempt)
-    raise last_error
-
-
-def version_key(version):
-    return tuple(map(int, version.split(".")))
-
-
-def declared_version(text):
-    match = re.search(r"^pkgver=(\d+\.\d+\.\d+)$", text, re.MULTILINE)
-    if not match:
-        raise ValueError("pkgver not found")
-    return match.group(1)
 
 
 def newest_eligible_release(releases):
@@ -64,8 +31,7 @@ def newest_eligible_release(releases):
 
 def updated_apkbuild(text, version, digest):
     old = declared_version(text)
-    text = re.sub(r"^pkgver=.*$", f"pkgver={version}", text, count=1, flags=re.MULTILINE)
-    text = re.sub(r"^pkgrel=.*$", "pkgrel=0", text, count=1, flags=re.MULTILINE)
+    text = bump_apkbuild_version(text, version)
     pattern = rf"^[0-9a-f]{{128}}  ports-box-{re.escape(old)}\.tar\.gz$"
     replacement = f"{digest}  ports-box-{version}.tar.gz"
     text, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE)
