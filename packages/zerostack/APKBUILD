@@ -1,31 +1,36 @@
 pkgname=zerostack
 pkgver=1.7.2
-pkgrel=2
+pkgrel=0
 pkgdesc="Minimalistic coding agent written in Rust"
 url="https://github.com/gi-dellav/zerostack"
-# Upstream's aarch64 1.7.2 binary cannot run; see angribot/apkbuilds#35.
-# The updater restores architecture support for later unmarked versions.
-arch="x86_64 !aarch64"
+arch="x86_64 aarch64"
 license="GPL-3.0-only"
+# zerostack shells out to bash for tool execution.
 depends="bash"
-options="!check !strip" # staged APK is tested with its repository read-only
+# ring (via rustls) compiles C/asm in its build script.
+makedepends="
+	cargo
+	rust
+	build-base
+	"
+# The staged APK is tested with its repository read-only.
+options="!strip"
+source="zerostack-$pkgver.tar.gz::https://github.com/gi-dellav/zerostack/archive/refs/tags/v$pkgver.tar.gz"
 
-case "$CARCH" in
-x86_64)
-	_sha512="4918c2c98cde9ab394301b231e3e16c36011bf0c9d2f319c3dd160d70aa01c6e14f762cd97b0c2afb09ee72fee046a2386539101c1c6c5096fab589530cdb488"
-	;;
-aarch64)
-	_sha512="42279b97883641b1697a71635f324042cb2db54a875b12642468231b3cfd1af6a60b28380f2a38593ecd0dfd692c36c829e437ac75b597cbe77362ad27216687"
-	;;
-esac
-source="zerostack-$pkgver-$CARCH.tar.gz::https://github.com/gi-dellav/zerostack/releases/download/v$pkgver/zerostack-$CARCH-unknown-linux-musl.tar.gz"
+build() {
+	cargo build --release --locked
+}
+
+check() {
+	cargo test --locked
+}
 
 package() {
-	binary="$srcdir/zerostack-$CARCH-unknown-linux-musl"
+	binary="$builddir/target/release/zerostack"
 	test "$("$binary" --version)" = "zerostack $pkgver"
 	install -Dm755 "$binary" "$pkgdir/usr/bin/zerostack"
 }
 
 sha512sums="
-$_sha512  zerostack-$pkgver-$CARCH.tar.gz
+2e6eb0ef5404d759224cd67b2abbe8d777175ce123b431daaf2fad57c01ef3b70fed691778a15c2e631785db76bb8bb53c00fab7200ab53e3bad642b3cf81eb2  zerostack-1.7.2.tar.gz
 "
