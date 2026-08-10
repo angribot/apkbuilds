@@ -1,7 +1,12 @@
+import hashlib
 import importlib.util
+import json
+import pathlib
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPTS = Path(__file__).parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -12,49 +17,57 @@ SPEC = importlib.util.spec_from_file_location(
 update = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(update)
 
-ASSET_NAMES = [a.name for a in update.ASSETS.values()]
 
-
-def release(tag, assets=ASSET_NAMES, **values):
-    result = {
-        "tag_name": tag,
-        "draft": False,
-        "prerelease": False,
-        "assets": [{"name": name} for name in assets],
-    }
+def release(tag, **values):
+    result = {"tag_name": tag, "draft": False, "prerelease": False}
     result.update(values)
     return result
 
 
 class UpdateZerostackTest(unittest.TestCase):
-    def test_newest_eligible_release_requires_version_tag_and_both_assets(self):
-        version, assets = update.newest_eligible_release(
+    def test_newest_eligible_release_requires_strict_version_tag(self):
+        version = update.newest_eligible_release(
             [
                 release("v2.0.0-rc1"),
                 release("v1.10.0", prerelease=True),
-                release("v1.9.0", assets=ASSET_NAMES[:1]),
+                release("v1.9.0", draft=True),
                 release("v1.8.0"),
-                release("v1.7.0"),
+                release("nightly"),
             ]
         )
         self.assertEqual(version, "1.8.0")
-        self.assertEqual(set(assets), {"x86_64", "aarch64"})
 
-    def test_update_resets_revision_checksums_and_architectures(self):
-        text = (
-            'pkgver=1.7.0\npkgrel=2\narch="x86_64 !aarch64"\n'
-            "case \"$CARCH\" in\n"
-            f"x86_64)\n\t_sha512=\"{'a' * 128}\"\n\t;;\n"
-            f"aarch64)\n\t_sha512=\"{'b' * 128}\"\n\t;;\nesac\n"
-        )
-        digests = {"x86_64": "c" * 128, "aarch64": "d" * 128}
-        excluded_arch_result = update.updated_apkbuild(text, "1.7.2", digests)
-        self.assertIn('arch="x86_64 !aarch64"', excluded_arch_result)
+    def test_update_resets_revision_and_checksum(self):
+        text = "pkgver=1.7.1\npkgrel=2\n" + "a" * 128 + "  zerostack-1.7.1.tar.gz\n"
+        result = update.updated_apkbuild(text, "1.7.2", "b" * 128)
+        self.assertIn("pkgver=1.7.2\npkgrel=0", result)
+        self.assertIn("b" * 128 + "  zerostack-1.7.2.tar.gz", result)
 
-        result = update.updated_apkbuild(text, "1.8.0", digests)
-        self.assertIn('pkgver=1.8.0\npkgrel=0\narch="x86_64 aarch64"', result)
-        self.assertIn(f'x86_64)\n\t_sha512="{"c" * 128}"', result)
-        self.assertIn(f'aarch64)\n\t_sha512="{"d" * 128}"', result)
+    def test_update_rejects_missing_checksum(self):
+        with self.assertRaisesRegex(ValueError, "source checksum"):
+            update.updated_apkbuild("pkgver=1.7.1\npkgrel=0\n", "1.7.2", "b" * 128)
+
+    def test_main_pins_archive_checksum_from_strict_tag(self):
+        # The sha512 written into the APKBUILD must match what abuild verifies
+        # against the upstream archive at the strict version tag.
+        data = b"source archive"
+        digest = hashlib.sha512(data).hexdigest()
+        releases = json.dumps([release("v1.7.3")]).encode()
+        apkbuild = tempfile.NamedTemporaryFile(mode="w", delete=False)
+        self.addCleanup(pathlib.Path(apkbuild.name).unlink)
+        apkbuild.write("pkgver=1.7.2\npkgrel=0\n" + "a" * 128 + "  zerostack-1.7.2.tar.gz\n")
+        apkbuild.close()
+
+        def download(url):
+            if url.endswith("/releases?per_page=100"):
+                return releases
+            return data
+
+        with mock.patch.object(update, "download", side_effect=download), \
+                mock.patch.object(update, "APKBUILD", pathlib.Path(apkbuild.name)):
+            update.main([])
+        self.assertIn("pkgver=1.7.3\npkgrel=0", pathlib.Path(apkbuild.name).read_text())
+        self.assertIn(digest + "  zerostack-1.7.3.tar.gz", pathlib.Path(apkbuild.name).read_text())
 
 
 if __name__ == "__main__":
