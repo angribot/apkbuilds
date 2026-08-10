@@ -13,7 +13,7 @@ makedepends="
 	rust
 	build-base
 	"
-# `detect_git_branch_in_repo_returns_nonempty` expects a git checkout,
+# detect_git_branch_in_repo_returns_nonempty expects a git checkout,
 # but abuild extracts a source tarball. The staged APK is tested with
 # its repository read-only.
 options="!check !strip"
