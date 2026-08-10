@@ -13,8 +13,10 @@ makedepends="
 	rust
 	build-base
 	"
-# The staged APK is tested with its repository read-only.
-options="!strip"
+# `detect_git_branch_in_repo_returns_nonempty` expects a git checkout,
+# but abuild extracts a source tarball. The staged APK is tested with
+# its repository read-only.
+options="!check !strip"
 source="zerostack-$pkgver.tar.gz::https://github.com/gi-dellav/zerostack/archive/refs/tags/v$pkgver.tar.gz"
 
 build() {
