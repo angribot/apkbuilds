@@ -18,3 +18,4 @@ cat >> /home/builder/.abuild/abuild.conf <<'CCACHE'
 USE_CCACHE=1
 CCACHE_DIR=/home/builder/.cache/ccache
 CCACHE
+chown -R builder:builder /home/builder
