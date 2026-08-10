@@ -16,6 +16,9 @@ aarch64)
 	_sha512="4e46e4880f6929898d1f9f2d03edba20e496196cf3b8dafffec392e6889868d237ecb3d152e222a5f0b13763c9ae782a3cd181b20cdd809444a25aa5edf8736e"
 	;;
 esac
+# Only the architectures above are supported; a stale _sha512 would
+# produce an empty checksum line in sha512sums.
+
 source="realm-$pkgver-$CARCH.tar.gz::https://github.com/zhboner/realm/releases/download/v$pkgver/realm-$CARCH-unknown-linux-musl.tar.gz
 	realm.initd
 	"
@@ -23,6 +26,7 @@ source="realm-$pkgver-$CARCH.tar.gz::https://github.com/zhboner/realm/releases/d
 package() {
 	install -Dm755 "$srcdir/realm" "$pkgdir/usr/bin/realm"
 	install -Dm755 "$srcdir/realm.initd" "$pkgdir/etc/init.d/realm"
+	install -d "$pkgdir/etc/realm"
 }
 
 sha512sums="
