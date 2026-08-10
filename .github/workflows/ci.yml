@@ -154,18 +154,19 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Restore source distfiles
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ github.workspace }}/.cache/distfiles
           key: apkbuilds-distfiles-${{ matrix.arch }}-${{ matrix.origin }}-${{ hashFiles(format('packages/{0}/APKBUILD', matrix.origin)) }}
           restore-keys: apkbuilds-distfiles-${{ matrix.arch }}-${{ matrix.origin }}-
+      # ccache uses a stable key without the APKBUILD hash or run id:
+      # the compiler knows which objects are stale, so a single rolling
+      # cache per origin accumulates benefit across version bumps.
       - name: Restore ccache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ github.workspace }}/.cache/ccache-${{ matrix.origin }}
-          key: apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: |
-            apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-
+          key: apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}
       - name: Build packages missing from the published APK repository
         env:
           ARCH: ${{ matrix.arch }}
@@ -269,15 +270,15 @@ jobs:
               cp "$built"/*.apk "$candidate/"
             '
       - name: Save distfiles cache
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ github.workspace }}/.cache/distfiles
           key: apkbuilds-distfiles-${{ matrix.arch }}-${{ matrix.origin }}-${{ hashFiles(format('packages/{0}/APKBUILD', matrix.origin)) }}
       - name: Save ccache
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ github.workspace }}/.cache/ccache-${{ matrix.origin }}
-          key: apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-${{ github.run_id }}
+          key: apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}
       - name: Stage the built packages
         id: stage
         run: |
