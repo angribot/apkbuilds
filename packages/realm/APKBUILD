@@ -22,6 +22,7 @@ source="realm-$pkgver-$CARCH.tar.gz::https://github.com/zhboner/realm/releases/d
 
 package() {
 	install -Dm755 "$srcdir/realm" "$pkgdir/usr/bin/realm"
+	install -Dm755 "$srcdir/realm.initd" "$pkgdir/etc/init.d/realm"
 }
 
 sha512sums="
