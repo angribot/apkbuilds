@@ -20,7 +20,7 @@ jobs:
       matrix:
         include:
           - package: gnupg
-            updater: scripts/update.py
+            updater: scripts/update-gnupg.py
             apkbuild: packages/gnupg/APKBUILD
           - package: zerostack
             updater: scripts/update-zerostack.py

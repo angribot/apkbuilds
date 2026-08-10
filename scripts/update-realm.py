@@ -1,53 +1,19 @@
 #!/usr/bin/env python3
 import argparse
-import hashlib
 import json
-import os
 import re
-import time
-import urllib.request
-from urllib.error import HTTPError, URLError
 from pathlib import Path
+
+from update import ArchAsset, CandidateRelease, bump_apkbuild_version, declared_version, download, verified_sha512, version_key
 
 UPSTREAM_REPOSITORY = "https://github.com/zhboner/realm"
 RELEASES = "https://api.github.com/repos/zhboner/realm/releases?per_page=100"
 ASSETS = {
-    "x86_64": "realm-x86_64-unknown-linux-musl.tar.gz",
-    "aarch64": "realm-aarch64-unknown-linux-musl.tar.gz",
+    "x86_64": ArchAsset("x86_64", "realm-x86_64-unknown-linux-musl.tar.gz"),
+    "aarch64": ArchAsset("aarch64", "realm-aarch64-unknown-linux-musl.tar.gz"),
 }
 ROOT = Path(__file__).resolve().parents[1]
 APKBUILD = ROOT / "packages/realm/APKBUILD"
-
-
-def download(url):
-    headers = {"User-Agent": "apkbuilds-updater"}
-    if url.startswith("https://api.github.com/") and os.environ.get("GITHUB_TOKEN"):
-        headers["Authorization"] = f"Bearer {os.environ['GITHUB_TOKEN']}"
-    request = urllib.request.Request(url, headers=headers)
-    for attempt in range(3):
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return response.read()
-        except HTTPError as error:
-            if error.code not in (408, 429) and not 500 <= error.code < 600:
-                raise
-            last_error = error
-        except (TimeoutError, URLError) as error:
-            last_error = error
-        if attempt < 2:
-            time.sleep(2**attempt)
-    raise last_error
-
-
-def version_key(version):
-    return tuple(map(int, version.split(".")))
-
-
-def declared_version(text):
-    match = re.search(r"^pkgver=(\d+\.\d+\.\d+)$", text, re.MULTILINE)
-    if not match:
-        raise ValueError("pkgver not found")
-    return match.group(1)
 
 
 def newest_eligible_release(releases):
@@ -63,30 +29,24 @@ def newest_eligible_release(releases):
             for asset in release.get("assets", [])
             if isinstance(asset, dict)
         }
-        if not all(name in available for name in ASSETS.values()):
+        if not all(asset.name in available for asset in ASSETS.values()):
             continue
         version = match.group(1)
         candidates.append(
-            (version_key(version), version, {arch: available[name] for arch, name in ASSETS.items()})
+            CandidateRelease(
+                version_key(version),
+                version,
+                {arch: available[asset.name] for arch, asset in ASSETS.items()},
+            )
         )
     if not candidates:
         raise ValueError("no eligible upstream releases with musl binaries found")
-    _, version, assets = max(candidates, key=lambda candidate: candidate[0])
-    return version, assets
-
-
-def verified_sha512(data, github_digest):
-    match = re.fullmatch(r"sha256:([0-9a-f]{64})", github_digest or "")
-    if not match:
-        raise ValueError("invalid GitHub asset digest")
-    if hashlib.sha256(data).hexdigest() != match.group(1):
-        raise ValueError("GitHub asset digest mismatch")
-    return hashlib.sha512(data).hexdigest()
+    best = max(candidates, key=lambda c: c.version_key)
+    return best.version, best.assets
 
 
 def updated_apkbuild(text, version, digests):
-    text = re.sub(r"^pkgver=.*$", f"pkgver={version}", text, count=1, flags=re.MULTILINE)
-    text = re.sub(r"^pkgrel=.*$", "pkgrel=0", text, count=1, flags=re.MULTILINE)
+    text = bump_apkbuild_version(text, version)
     for arch in ASSETS:
         digest = digests.get(arch, "")
         if not re.fullmatch(r"[0-9a-f]{128}", digest):
@@ -117,8 +77,8 @@ def main():
         return
 
     digests = {}
-    for arch, name in ASSETS.items():
-        url = f"{UPSTREAM_REPOSITORY}/releases/download/v{version}/{name}"
+    for arch, arch_asset in ASSETS.items():
+        url = f"{UPSTREAM_REPOSITORY}/releases/download/v{version}/{arch_asset.name}"
         asset = assets[arch]
         if asset.get("browser_download_url") != url:
             raise ValueError(f"unexpected {arch} asset URL")

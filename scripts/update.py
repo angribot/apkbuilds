@@ -1,31 +1,39 @@
-#!/usr/bin/env python3
-import argparse
+"""Shared updater skeleton for Alpine package updaters."""
+
 import hashlib
+import os
 import re
-import subprocess
-import tempfile
 import time
 import urllib.request
+from typing import NamedTuple
 from urllib.error import HTTPError, URLError
-from pathlib import Path
 
-BASE = "https://gnupg.org/ftp/gcrypt/gnupg"
-FINGERPRINTS = {
-    "6DAA6E64A76D2840571B4902528897B826403ADA",
-    "AC8E115BF73E2D8D47FA9908E98E9B2D19C6C8BD",
-    "3B761AE4E63BF3519CE7D63BECB664CBE1332EEF",
-    "02F38DFF731FF97CB039A1DA549E695E905BA208",
-    "1493269DE61F124AA69A316E3ADF34EBDBB200A4",
-}
-ROOT = Path(__file__).resolve().parents[1]
-APKBUILD = ROOT / "packages/gnupg/APKBUILD"
-KEYRING = ROOT / "keys/gnupg-release.asc"
+
+class ArchAsset(NamedTuple):
+    """An architecture-specific upstream release asset."""
+
+    arch: str
+    name: str
+
+
+class CandidateRelease(NamedTuple):
+    """A candidate upstream release with its version and architecture assets."""
+
+    version_key: tuple[int, ...]
+    version: str
+    assets: dict[str, dict]
 
 
 def download(url):
+    """Download *url* with retry and backoff, returning the response body."""
+    headers = {"User-Agent": "apkbuilds-updater"}
+    if url.startswith("https://api.github.com/") and os.environ.get("GITHUB_TOKEN"):
+        headers["Authorization"] = f"Bearer {os.environ['GITHUB_TOKEN']}"
+    request = urllib.request.Request(url, headers=headers)
+    last_error = None
     for attempt in range(3):
         try:
-            with urllib.request.urlopen(url, timeout=30) as response:
+            with urllib.request.urlopen(request, timeout=30) as response:
                 return response.read()
         except HTTPError as error:
             if error.code not in (408, 429) and not 500 <= error.code < 600:
@@ -38,74 +46,31 @@ def download(url):
     raise last_error
 
 
-def newest_eligible_version(index):
-    versions = set(re.findall(r'href="gnupg-(\d+\.\d+\.\d+)\.tar\.bz2"', index))
-    if not versions:
-        raise ValueError("no eligible upstream releases found")
-    return max(versions, key=lambda value: tuple(map(int, value.split("."))))
+def bump_apkbuild_version(text, version):
+    """Update pkgver and reset pkgrel in APKBUILD *text*."""
+    text = re.sub(r"^pkgver=.*$", f"pkgver={version}", text, count=1, flags=re.MULTILINE)
+    text = re.sub(r"^pkgrel=.*$", "pkgrel=0", text, count=1, flags=re.MULTILINE)
+    return text
+
+
+def version_key(version):
+    """Parse *version* into a comparable tuple of integers."""
+    return tuple(map(int, version.split(".")))
 
 
 def declared_version(text):
+    """Extract the declared pkgver from APKBUILD *text*."""
     match = re.search(r"^pkgver=(\d+\.\d+\.\d+)$", text, re.MULTILINE)
     if not match:
         raise ValueError("pkgver not found")
     return match.group(1)
 
 
-def updated_apkbuild(text, version, digest):
-    old = declared_version(text)
-    text = re.sub(r"^pkgver=.*$", f"pkgver={version}", text, count=1, flags=re.MULTILINE)
-    text = re.sub(r"^pkgrel=.*$", "pkgrel=0", text, count=1, flags=re.MULTILINE)
-    pattern = rf"^[0-9a-f]{{128}}  gnupg-{re.escape(old)}\.tar\.bz2$"
-    replacement = f"{digest}  gnupg-{version}.tar.bz2"
-    text, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE)
-    if count != 1:
-        raise ValueError("source checksum not found")
-    return text
-
-
-def verify(source, signature):
-    with tempfile.TemporaryDirectory() as directory:
-        home = Path(directory) / "home"
-        home.mkdir(mode=0o700)
-        source_path = Path(directory) / "source.tar.bz2"
-        signature_path = Path(directory) / "source.sig"
-        source_path.write_bytes(source)
-        signature_path.write_bytes(signature)
-        subprocess.run(
-            ["gpg", "--batch", "--homedir", str(home), "--import", str(KEYRING)],
-            check=True,
-            capture_output=True,
-        )
-        result = subprocess.run(
-            ["gpg", "--batch", "--homedir", str(home), "--status-fd", "1", "--verify", str(signature_path), str(source_path)],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    signers = {line.split()[2] for line in result.stdout.splitlines() if line.startswith("[GNUPG:] VALIDSIG ")}
-    if not signers or not signers <= FINGERPRINTS:
-        raise ValueError(f"untrusted release signer: {signers}")
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--check", action="store_true")
-    args = parser.parse_args()
-    text = APKBUILD.read_text()
-    version = newest_eligible_version(download(f"{BASE}/").decode())
-    if version == declared_version(text):
-        print(version)
-        return
-    source = download(f"{BASE}/gnupg-{version}.tar.bz2")
-    signature = download(f"{BASE}/gnupg-{version}.tar.bz2.sig")
-    verify(source, signature)
-    if args.check:
-        raise SystemExit(f"update available: {version}")
-    digest = hashlib.sha512(source).hexdigest()
-    APKBUILD.write_text(updated_apkbuild(text, version, digest))
-    print(version)
-
-
-if __name__ == "__main__":
-    main()
+def verified_sha512(data, github_digest):
+    """Verify *data* against *github_digest* and return its sha512 hex string."""
+    match = re.fullmatch(r"sha256:([0-9a-f]{64})", github_digest or "")
+    if not match:
+        raise ValueError("invalid GitHub asset digest")
+    if hashlib.sha256(data).hexdigest() != match.group(1):
+        raise ValueError("GitHub asset digest mismatch")
+    return hashlib.sha512(data).hexdigest()

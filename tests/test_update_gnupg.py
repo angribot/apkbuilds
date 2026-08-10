@@ -1,13 +1,19 @@
 import importlib.util
+import sys
 import unittest
 from pathlib import Path
 
-SPEC = importlib.util.spec_from_file_location("update", Path(__file__).parents[1] / "scripts/update.py")
+SCRIPTS = Path(__file__).parents[1] / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+
+SPEC = importlib.util.spec_from_file_location(
+    "update_gnupg", SCRIPTS / "update-gnupg.py"
+)
 update = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(update)
 
 
-class UpdateTest(unittest.TestCase):
+class UpdateGnupgTest(unittest.TestCase):
     def test_newest_eligible_version_ignores_ineligible_files(self):
         index = '<a href="gnupg-2.5.9.tar.bz2">x</a><a href="gnupg-2.5.10.tar.bz2">x</a><a href="gnupg-2.6.0-beta.tar.bz2">x</a>'
         self.assertEqual(update.newest_eligible_version(index), "2.5.10")
