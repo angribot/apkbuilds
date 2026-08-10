@@ -7,6 +7,13 @@ on:
   pull_request:
     paths-ignore: ["**.md"]
   workflow_dispatch:
+    inputs:
+      full:
+        description: 'Build all package origins regardless of changes'
+        type: boolean
+        default: false
+  schedule:
+    - cron: '0 0 * * 0'
 
 permissions:
   contents: read
@@ -88,23 +95,60 @@ jobs:
           done
           exit "$status"
 
-  build:
+  plan:
     needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Compute changed origins
+        id: set-matrix
+        env:
+          EVENT: ${{ github.event_name }}
+          FULL: ${{ inputs.full || 'false' }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          . scripts/lib.sh
+          if [ "$EVENT" = "schedule" ] || [ "$FULL" = "true" ]; then
+            origins=$(all_origins)
+          elif [ "$EVENT" = "pull_request" ]; then
+            origins=$(git diff --name-only "$BASE" -- packages/ | \
+              sed -n 's|^packages/\([^/]*\)/APKBUILD$|\1|p' | sort -u)
+          else
+            origins=$(git diff --name-only "$BEFORE" -- packages/ | \
+              sed -n 's|^packages/\([^/]*\)/APKBUILD$|\1|p' | sort -u)
+          fi
+          items=""
+          for origin in $origins; do
+            for arch in x86_64 aarch64; do
+              runner=ubuntu-24.04
+              [ "$arch" = aarch64 ] && runner=ubuntu-24.04-arm
+              if supports_arch "$arch" "packages/$origin/APKBUILD"; then
+                [ -n "$items" ] && items="$items,"
+                items="$items{\"arch\":\"$arch\",\"origin\":\"$origin\",\"runner\":\"$runner\"}"
+              fi
+            done
+          done
+          echo "matrix={\"include\":[$items]}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: [check, plan]
     timeout-minutes: 90
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            runner: ubuntu-24.04
-          - arch: aarch64
-            runner: ubuntu-24.04-arm
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Build packages missing from the published APK repository
         env:
           ARCH: ${{ matrix.arch }}
+          ORIGIN: ${{ matrix.origin }}
           BRANCH: ${{ github.ref_name }}
         run: |
           mkdir -p "$RUNNER_TEMP/new"
@@ -112,6 +156,7 @@ jobs:
           # build scripts, so it must never see the repository signing key.
           docker run --rm \
             -e ARCH \
+            -e ORIGIN \
             -e BRANCH \
             -e PUBLISHED="$PAGES_URL/edge/${{ matrix.arch }}" \
             -v "$GITHUB_WORKSPACE:/workspace" \
@@ -135,87 +180,84 @@ jobs:
 
               su builder -c "abuild-keygen -a -n"
               cp /home/builder/.config/abuild/*.rsa.pub /etc/apk/keys/
-              for origin in $(all_origins); do
-                supports_arch "$ARCH" "packages/$origin/APKBUILD" || continue
-                assert_origin_directory "packages/$origin"
-                expected="/tmp/expected-$origin"
-                published="/tmp/published-$origin"
-                su builder -c \
-                  "cd /workspace/packages/$origin && abuild listpkg" \
-                  > "$expected"
-                apkindex_origin_apks \
-                  /tmp/published/APKINDEX "$origin" > "$published"
-                if package_sets_equal "$expected" "$published"; then
-                  published_apks="/tmp/published/$origin"
-                  mkdir -p "$published_apks"
-                  while IFS= read -r package; do
-                    downloaded="$published_apks/$package"
-                    wget -q -T 15 -t 2 -O "$downloaded" \
-                      "$PUBLISHED/$package"
-                    apk verify "$downloaded"
-                  done < "$expected"
-                  printf "==> %s package family already published\n" "$origin"
-                  continue
-                fi
 
-                declared=$(apkbuild_field pkgver "packages/$origin/APKBUILD")-r$(
-                  apkbuild_field pkgrel "packages/$origin/APKBUILD"
-                )
-                versions="/tmp/published-versions-$origin"
-                apkindex_origin_versions \
-                  /tmp/published/APKINDEX "$origin" > "$versions"
-                if grep -Fx "$declared" "$versions" >/dev/null; then
-                  printf "%s %s already published with a different package set\n" \
-                    "$origin" "$declared" >&2
-                  exit 1
-                fi
+              supports_arch "$ARCH" "packages/$ORIGIN/APKBUILD" || exit 0
+              assert_origin_directory "packages/$ORIGIN"
+              expected="/tmp/expected-$ORIGIN"
+              published="/tmp/published-$ORIGIN"
+              su builder -c \
+                "cd /workspace/packages/$ORIGIN && abuild listpkg" \
+                > "$expected"
+              apkindex_origin_apks \
+                /tmp/published/APKINDEX "$ORIGIN" > "$published"
+              if package_sets_equal "$expected" "$published"; then
+                published_apks="/tmp/published/$ORIGIN"
+                mkdir -p "$published_apks"
+                while IFS= read -r package; do
+                  downloaded="$published_apks/$package"
+                  wget -q -T 15 -t 2 -O "$downloaded" \
+                    "$PUBLISHED/$package"
+                  apk verify "$downloaded"
+                done < "$expected"
+                printf "==> %s package family already published\n" "$ORIGIN"
+                exit 0
+              fi
 
-                su builder -c \
-                  "cd /workspace/packages/$origin && REPODEST=\"/new/$origin\" abuild -r"
-                built="/new/$origin/packages/$ARCH"
-                actual="/tmp/actual-$origin"
-                find "$built" -maxdepth 1 -type f -name "*.apk" \
-                  -exec basename {} \; > "$actual"
-                if ! package_sets_equal "$expected" "$actual"; then
-                  printf "%s build produced an incomplete package family\n" \
-                    "$origin" >&2
-                  diff -u "$expected" "$actual" >&2 || true
-                  exit 1
-                fi
+              declared=$(apkbuild_field pkgver "packages/$ORIGIN/APKBUILD")-r$(
+                apkbuild_field pkgrel "packages/$ORIGIN/APKBUILD"
+              )
+              versions="/tmp/published-versions-$ORIGIN"
+              apkindex_origin_versions \
+                /tmp/published/APKINDEX "$ORIGIN" > "$versions"
+              if grep -Fx "$declared" "$versions" >/dev/null; then
+                printf "%s %s already published with a different package set\n" \
+                  "$ORIGIN" "$declared" >&2
+                exit 1
+              fi
 
-                # Installation and package-specific smoke tests happen before
-                # this family becomes a publication candidate.
-                set -- apk add --allow-untrusted --repository "$built"
-                for package in "$built"/*.apk; do set -- "$@" "$package"; done
-                "$@"
-                if [ "$origin" = gnupg ]; then
-                  scripts/test-package.sh \
-                    "$(apkbuild_field pkgver packages/gnupg/APKBUILD)"
-                fi
-                if [ "$origin" = ports-box ]; then
-                  scripts/test-ports-box-service.sh
-                fi
-                candidate="/new/built/$ARCH/$origin"
-                mkdir -p "$candidate"
-                cp "$built"/*.apk "$candidate/"
-              done
+              su builder -c \
+                "cd /workspace/packages/$ORIGIN && REPODEST=\"/new/$ORIGIN\" abuild -r"
+              built="/new/$ORIGIN/packages/$ARCH"
+              actual="/tmp/actual-$ORIGIN"
+              find "$built" -maxdepth 1 -type f -name "*.apk" \
+                -exec basename {} \; > "$actual"
+              if ! package_sets_equal "$expected" "$actual"; then
+                printf "%s build produced an incomplete package family\n" \
+                  "$ORIGIN" >&2
+                diff -u "$expected" "$actual" >&2 || true
+                exit 1
+              fi
+
+              # Installation and package-specific smoke tests happen before
+              # this family becomes a publication candidate.
+              set -- apk add --allow-untrusted --repository "$built"
+              for package in "$built"/*.apk; do set -- "$@" "$package"; done
+              "$@"
+              if [ "$ORIGIN" = gnupg ]; then
+                scripts/test-package.sh \
+                  "$(apkbuild_field pkgver packages/gnupg/APKBUILD)"
+              fi
+              if [ "$ORIGIN" = ports-box ]; then
+                scripts/test-ports-box-service.sh
+              fi
+              candidate="/new/built/$ARCH/$ORIGIN"
+              mkdir -p "$candidate"
+              cp "$built"/*.apk "$candidate/"
             '
       - name: Stage the built packages
         id: stage
-        env:
-          ARCH: ${{ matrix.arch }}
         run: |
-          built="$RUNNER_TEMP/new/built/$ARCH"
+          built="$RUNNER_TEMP/new/built/${{ matrix.arch }}/${{ matrix.origin }}"
           if [ -n "$(find "$built" -name '*.apk' -print -quit 2>/dev/null)" ]; then
             echo 'built=true' >> "$GITHUB_OUTPUT"
           else
             echo 'built=false' >> "$GITHUB_OUTPUT"
-            echo "no new packages for $ARCH"
+            echo "no new packages for ${{ matrix.arch }} ${{ matrix.origin }}"
           fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: steps.stage.outputs.built == 'true'
         with:
-          name: built-${{ matrix.arch }}
+          name: built-${{ matrix.arch }}-${{ matrix.origin }}
           # Keep the architecture directory inside each artifact. Downloads
           # can then merge one or many artifacts into the same stable layout.
           path: ${{ runner.temp }}/new/built/

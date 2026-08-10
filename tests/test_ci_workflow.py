@@ -30,8 +30,8 @@ class PackageOriginBuildTest(unittest.TestCase):
         self.assertLess(physical_verification, skip)
 
     def test_each_candidate_family_has_isolated_artifact_directory(self):
-        self.assertIn('/new/$origin/packages/$ARCH', WORKFLOW)
-        self.assertIn('/new/built/$ARCH/$origin', WORKFLOW)
+        self.assertIn('/new/$ORIGIN/packages/$ARCH', WORKFLOW)
+        self.assertIn('/new/built/$ARCH/$ORIGIN', WORKFLOW)
         self.assertIn("path: ${{ runner.temp }}/new/built/", WORKFLOW)
         self.assertIn("merge-multiple: true", WORKFLOW)
         self.assertIn('source="$built/$arch"', MERGER)
@@ -77,9 +77,9 @@ class PackageOriginReplacementTest(unittest.TestCase):
 
     def test_unsupported_architecture_has_no_replacement_candidate(self):
         support_check = WORKFLOW.index('supports_arch "$ARCH"')
-        candidate_directory = WORKFLOW.index('/new/built/$ARCH/$origin')
+        candidate_directory = WORKFLOW.index('/new/built/$ARCH/$ORIGIN')
         self.assertLess(support_check, candidate_directory)
-        self.assertIn('supports_arch "$ARCH" "packages/$origin/APKBUILD" || continue', WORKFLOW)
+        self.assertIn('supports_arch "$ARCH" "packages/$ORIGIN/APKBUILD" || exit 0', WORKFLOW)
 
     def test_every_architecture_baseline_is_verified_during_publication(self):
         source_guard = MERGER.index('if ! test -d "$source"')
