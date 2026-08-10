@@ -1,0 +1,18 @@
+#!/sbin/openrc-run
+
+name=$RC_SVCNAME
+description="realm network relay server"
+supervisor="supervise-daemon"
+command="/usr/bin/realm"
+command_args="-c /etc/realm/config.toml"
+
+depend() {
+	after net dns
+}
+
+start_pre() {
+	[ -f /etc/realm/config.toml ] || {
+		eerror "realm config /etc/realm/config.toml not found"
+		return 1
+	}
+}

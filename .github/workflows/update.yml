@@ -28,6 +28,9 @@ jobs:
           - package: ports-box
             updater: scripts/update-ports-box.py
             apkbuild: packages/ports-box/APKBUILD
+          - package: realm
+            updater: scripts/update-realm.py
+            apkbuild: packages/realm/APKBUILD
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:

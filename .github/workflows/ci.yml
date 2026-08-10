@@ -265,6 +265,9 @@ jobs:
               if [ "$ORIGIN" = ports-box ]; then
                 scripts/test-ports-box-service.sh
               fi
+              if [ "$ORIGIN" = realm ]; then
+                scripts/test-realm-service.sh
+              fi
               candidate="/new/built/$ARCH/$ORIGIN"
               mkdir -p "$candidate"
               cp "$built"/*.apk "$candidate/"
