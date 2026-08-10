@@ -1,0 +1,30 @@
+pkgname=realm
+pkgver=2.9.4
+pkgrel=0
+pkgdesc="A simple, high performance relay server written in Rust"
+url="https://github.com/zhboner/realm"
+arch="x86_64 aarch64"
+license="MIT"
+options="!check !strip"
+subpackages="$pkgname-openrc"
+
+case "$CARCH" in
+x86_64)
+	_sha512="59b45b8b6114980e9cbf2a38bb6ec366b1486333511790a975bef992359ef322cd9ea8212a82d26eb2775a3690dbfde720e71874da1a59f3044815caf9a0a23d"
+	;;
+aarch64)
+	_sha512="4e46e4880f6929898d1f9f2d03edba20e496196cf3b8dafffec392e6889868d237ecb3d152e222a5f0b13763c9ae782a3cd181b20cdd809444a25aa5edf8736e"
+	;;
+esac
+source="realm-$pkgver-$CARCH.tar.gz::https://github.com/zhboner/realm/releases/download/v$pkgver/realm-$CARCH-unknown-linux-musl.tar.gz
+	realm.initd
+	"
+
+package() {
+	install -Dm755 "$srcdir/realm" "$pkgdir/usr/bin/realm"
+}
+
+sha512sums="
+$_sha512  realm-$pkgver-$CARCH.tar.gz
+6c29bd6bb61bfb4147acd2cd967975151326fc53ace8770b640ce5be0503d95f5801e5000e6b0d8d4a10d86bc75f206aebc616b807843a38b267dd4d68a1cc56  realm.initd
+"
