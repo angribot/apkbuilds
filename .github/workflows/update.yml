@@ -25,6 +25,9 @@ jobs:
           - package: zerostack
             updater: scripts/update-zerostack.py
             apkbuild: packages/zerostack/APKBUILD
+          - package: tirith
+            updater: scripts/update-tirith.py
+            apkbuild: packages/tirith/APKBUILD
           - package: ports-box
             updater: scripts/update-ports-box.py
             apkbuild: packages/ports-box/APKBUILD

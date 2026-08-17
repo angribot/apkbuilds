@@ -1,0 +1,73 @@
+pkgname=tirith
+pkgver=0.3.3
+pkgrel=0
+pkgdesc="Terminal security for developers and AI agents"
+url="https://github.com/sheeki03/tirith"
+arch="x86_64 aarch64"
+license="AGPL-3.0-only"
+depends="ca-certificates"
+# ring (via rustls) compiles C and assembly in its build script.
+makedepends="
+	cargo
+	rust
+	build-base
+	"
+checkdepends="bash"
+# Cargo's release profile strips the binary itself.
+options="!strip"
+source="tirith-$pkgver.tar.gz::https://github.com/sheeki03/tirith/archive/refs/tags/v$pkgver.tar.gz
+	0001-add-apk-install-method.patch
+	"
+
+prepare() {
+	default_prepare
+	cargo fetch --target="$CTARGET" --locked
+}
+
+build() {
+	cargo build --release --frozen --package tirith --bin tirith
+}
+
+check() {
+	# The full upstream suite includes DNS-dependent tests; run its deterministic
+	# provenance, bypass-regression, safe-command, and shell-hook coverage.
+	cargo test --frozen --package tirith-core --lib selfupdate::tests
+	cargo test --frozen --package tirith-core \
+		--test bypass_regression \
+		--test safe_command_integration
+	cargo test --frozen --package tirith --bin tirith cli::selfupdate::tests
+	cargo test --frozen --package tirith --test bash_hook_exports
+}
+
+package() {
+	binary="$builddir/target/release/tirith"
+	test "$("$binary" --version)" = "tirith $pkgver"
+	install -Dm755 "$binary" "$pkgdir/usr/bin/tirith"
+
+	shell_dir="$pkgdir/usr/share/tirith/shell"
+	install -Dm644 "$builddir/crates/tirith/assets/shell/tirith.sh" \
+		"$shell_dir/tirith.sh"
+	for hook in bash-hook.bash fish-hook.fish nushell-hook.nu \
+		powershell-hook.ps1 zsh-hook.zsh; do
+		install -Dm644 "$builddir/crates/tirith/assets/shell/lib/$hook" \
+			"$shell_dir/lib/$hook"
+	done
+
+	install -d \
+		"$pkgdir/usr/share/bash-completion/completions" \
+		"$pkgdir/usr/share/zsh/site-functions" \
+		"$pkgdir/usr/share/fish/vendor_completions.d" \
+		"$pkgdir/usr/share/man/man1"
+	"$binary" completions bash > \
+		"$pkgdir/usr/share/bash-completion/completions/tirith"
+	"$binary" completions zsh > \
+		"$pkgdir/usr/share/zsh/site-functions/_tirith"
+	"$binary" completions fish > \
+		"$pkgdir/usr/share/fish/vendor_completions.d/tirith.fish"
+	"$binary" manpage | gzip -9 > "$pkgdir/usr/share/man/man1/tirith.1.gz"
+}
+
+sha512sums="
+7da57260d6247bce9d39bbcd7a99a22e106f825ac71c2931cb5ae6232952ce8a01b362624162e5e2aa2474b36367f2bd17a0a989116168750cc47cfa12d2e89b  tirith-0.3.3.tar.gz
+bec8f6995fa3bc525f5aa0a2d0d83010592c39f70b9965d4cefc0e848ec4c378900811a6b20b27a9c8de97d8e4c2d282764187271c367ae15925e1d7596673a8  0001-add-apk-install-method.patch
+"
