@@ -13,9 +13,8 @@ makedepends="
 	build-base
 	"
 checkdepends="bash"
-# Avoid abuild-injected LTO in ring; Cargo's release profile handles LTO and
-# strips the binary itself.
-options="!lto !strip"
+# Cargo's release profile strips the binary itself.
+options="!strip"
 source="tirith-$pkgver.tar.gz::https://github.com/sheeki03/tirith/archive/refs/tags/v$pkgver.tar.gz
 	0001-add-apk-install-method.patch
 	"
