@@ -19,7 +19,7 @@ for file in \
   /usr/share/bash-completion/completions/tirith \
   /usr/share/zsh/site-functions/_tirith \
   /usr/share/fish/vendor_completions.d/tirith.fish \
-  /usr/share/man/man1/tirith.1; do
+  /usr/share/man/man1/tirith.1.gz; do
   test -s "$file"
 done
 
