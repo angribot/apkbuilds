@@ -31,6 +31,9 @@ jobs:
           - package: ports-box
             updater: scripts/update-ports-box.py
             apkbuild: packages/ports-box/APKBUILD
+          - package: orbien
+            updater: scripts/update-orbien.py
+            apkbuild: packages/orbien/APKBUILD
           - package: realm
             updater: scripts/update-realm.py
             apkbuild: packages/realm/APKBUILD
