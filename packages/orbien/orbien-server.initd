@@ -1,0 +1,20 @@
+#!/sbin/openrc-run
+
+name=$RC_SVCNAME
+description="Orbien intranet tunneling server"
+command="/usr/bin/orbien-server"
+command_user="root:root"
+command_args="-c /etc/orbien/orbien-server.toml"
+command_background=true
+pidfile="/run/$RC_SVCNAME.pid"
+
+depend() {
+	after net dns
+}
+
+start_pre() {
+	[ -f /etc/orbien/orbien-server.toml ] || {
+		eerror "orbien server config /etc/orbien/orbien-server.toml not found"
+		return 1
+	}
+}
