@@ -36,6 +36,13 @@ class PackageOriginBuildTest(unittest.TestCase):
         self.assertIn("merge-multiple: true", WORKFLOW)
         self.assertIn('source="$built/$arch"', MERGER)
 
+    def test_orbien_client_is_smoke_tested_after_install(self):
+        installation = WORKFLOW.index('"$@"')
+        smoke_test = WORKFLOW.index("scripts/test-orbien.sh", installation)
+        staging = WORKFLOW.index('candidate="/new/built/$ARCH/$ORIGIN"', installation)
+        self.assertLess(installation, smoke_test)
+        self.assertLess(smoke_test, staging)
+
 
 class PackageOriginReplacementTest(unittest.TestCase):
     def test_candidate_indexing_accepts_untrusted_signatures(self):

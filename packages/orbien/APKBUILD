@@ -1,0 +1,43 @@
+pkgname=orbien
+pkgver=3.1.0
+pkgrel=0
+pkgdesc="Lightweight high-performance intranet tunneling client"
+url="https://github.com/orbien-org/orbien"
+arch="x86_64 aarch64"
+license="Apache-2.0"
+depends="ca-certificates"
+# ring (via rustls) compiles C and assembly in its build script.
+makedepends="
+	cargo
+	rust
+	build-base
+	"
+# Cargo's release profile strips the binary itself.
+options="!strip"
+source="orbien-$pkgver.tar.gz::https://github.com/orbien-org/orbien/archive/refs/tags/v$pkgver.tar.gz"
+
+prepare() {
+	default_prepare
+	# Use crates.io instead of upstream's rsproxy source replacement.
+	rm .cargo/config.toml
+	cargo fetch --target="$CTARGET" --locked
+}
+
+build() {
+	cargo build --release --frozen --package orbien-client --bin orbien
+}
+
+check() {
+	cargo test --frozen --package orbien-core --package orbien-client
+}
+
+package() {
+	binary="$builddir/target/release/orbien"
+	install -Dm755 "$binary" "$pkgdir/usr/bin/orbien"
+	install -Dm644 "$builddir/conf/orbien.toml" \
+		"$pkgdir/usr/share/doc/orbien/orbien.toml"
+}
+
+sha512sums="
+fd55f816ae6156709efd0b5adf853f36911e2bf96913a49fb8e141dfe8ab3a37143f5a33b39e469f6bfe561fbbeccfc006761ce1a9abe564a7a56b7b9c7df1cb  orbien-3.1.0.tar.gz
+"

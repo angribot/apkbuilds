@@ -262,6 +262,9 @@ jobs:
                 scripts/test-package.sh \
                   "$(apkbuild_field pkgver packages/gnupg/APKBUILD)"
               fi
+              if [ "$ORIGIN" = orbien ]; then
+                scripts/test-orbien.sh
+              fi
               if [ "$ORIGIN" = ports-box ]; then
                 scripts/test-ports-box-service.sh
               fi
