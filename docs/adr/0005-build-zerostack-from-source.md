@@ -1,11 +1,11 @@
-# Build zerostack from source
+# Build zerostack without relying on upstream release binaries
 
-Build zerostack from its tagged source archive instead of shipping upstream's
-release binaries. We originally used upstream static musl binaries (to keep
-the package pipeline small), but the v1.7.2 aarch64 binary was broken (issue
-#35), so we switched to a source build with Alpine's Rust toolchain — the
-same approach ports-box uses (ADR 0007). The HTTPS-fetched archive is pinned
-by sha512; only non-draft, non-prerelease GitHub releases with strict
-`vX.Y.Z` tags qualify as eligible upstream releases. Tests are disabled
-(`!check`) because one test expects a git checkout but abuild extracts a
-source tarball.
+Build zerostack with Alpine's toolchain instead of repackaging upstream release
+binaries. The source repository originally chose binary repackaging to keep
+builds small, but an unusable v1.7.2 aarch64 binary forced that architecture to
+remain on an older published build (issue #35). A source build costs more
+compilation time and requires the Rust toolchain, but gives both
+origin-supported architectures consistent package input under the source
+repository's build and verification controls; upstream binaries should be
+reintroduced only if their cross-architecture reliability outweighs
+surrendering those controls.
