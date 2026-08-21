@@ -32,3 +32,14 @@ Package origins and package-specific files are maintained under
 
 Runtime and build dependencies continue to come from Alpine edge, so stable
 Alpine releases are not supported.
+
+## Available packages
+
+| Package origin | Installable packages | Description |
+| --- | --- | --- |
+| [`gnupg`](packages/gnupg/) | `gnupg`, `gnupg-doc`, `gnupg-lang`, `gnupg-dirmngr`, `gnupg-gpgconf`, `gnupg-scdaemon`, `gnupg-scdaemon-udev`, `gnupg-keyboxd`, `gnupg-wks-client`, `gpg`, `gpg-agent`, `gpg-wks-server`, `gpgsm`, `gpgv`, `gnupg-utils` | GNU Privacy Guard suite |
+| [`orbien`](packages/orbien/) | `orbien`, `orbien-server`, `orbien-server-openrc` | Intranet tunneling client and server |
+| [`ports-box`](packages/ports-box/) | `ports-box`, `ports-box-openrc` | TCP/UDP port forwarder with per-user traffic quotas |
+| [`realm`](packages/realm/) | `realm`, `realm-openrc` | High-performance relay server |
+| [`tirith`](packages/tirith/) | `tirith` | Terminal security for developers and AI agents |
+| [`zerostack`](packages/zerostack/) | `zerostack` | Minimalistic coding agent |
