@@ -175,16 +175,16 @@ class PackageOriginBuildTest(unittest.TestCase):
         )
         self.assertIn(f'echo "prefix={prefix}"', key_step)
         self.assertIn(f'echo "key={prefix}{unique_suffix}"', key_step)
-        self.assertIn("key: ${{ steps.ccache-key.outputs.key }}", restore)
-        self.assertIn("restore-keys: ${{ steps.ccache-key.outputs.prefix }}", restore)
+        self.assertIn("key: ${{ steps.compiler-cache-key.outputs.key }}", restore)
+        self.assertIn("restore-keys: ${{ steps.compiler-cache-key.outputs.prefix }}", restore)
         self.assertIn(".cache/cargo-${{ matrix.origin }}", restore)
         self.assertIn(".cache/sccache-${{ matrix.origin }}", restore)
-        self.assertIn("CACHE_HIT: ${{ steps.ccache.outputs.cache-hit }}", WORKFLOW)
+        self.assertIn("CACHE_HIT: ${{ steps.compiler-cache.outputs.cache-hit }}", WORKFLOW)
         self.assertIn(
-            "CACHE_MATCHED_KEY: ${{ steps.ccache.outputs.cache-matched-key }}", WORKFLOW
+            "CACHE_MATCHED_KEY: ${{ steps.compiler-cache.outputs.cache-matched-key }}", WORKFLOW
         )
         self.assertIn("cache_restore_key=", WORKFLOW)
-        self.assertIn("key: ${{ steps.ccache-key.outputs.key }}", save)
+        self.assertIn("key: ${{ steps.compiler-cache-key.outputs.key }}", save)
         self.assertIn(".cache/cargo-${{ matrix.origin }}", save)
         self.assertIn(".cache/sccache-${{ matrix.origin }}", save)
         self.assertIn("if: steps.stage.outputs.built == 'true'", save)

@@ -8,9 +8,9 @@ must resolve to valid origins before matrix expansion, validation and planning
 share one checkout and job, and compiler-cache snapshots remain scoped and
 immutable per architecture, origin, runner, and toolchain. Scheduled and manual
 reconciliation compares every declared package family with the published
-snapshot; after an updater changes `main`, its publication dispatch has an
-additional bounded reconciliation attempt if the initial dispatch fails, while
-CI recovery retries only final branch publication failures.
+repository snapshot; after an updater changes `main`, its publication dispatch
+has an additional bounded reconciliation attempt if the initial dispatch
+fails, while CI recovery retries only final branch publication failures.
 
 ## Consequences
 

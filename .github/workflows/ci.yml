@@ -134,20 +134,20 @@ jobs:
       # unique key. GitHub Actions cache entries are immutable, so the save key
       # must never reuse the compatibility prefix itself.
       - name: Compute compiler cache keys
-        id: ccache-key
+        id: compiler-cache-key
         run: |
           echo "prefix=apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-${{ env.CI_TOOLCHAIN }}-" >> "$GITHUB_OUTPUT"
           echo "key=apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-${{ env.CI_TOOLCHAIN }}-${{ hashFiles(format('packages/{0}/**', matrix.origin)) }}-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
       - name: Restore compiler caches
-        id: ccache
+        id: compiler-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ${{ github.workspace }}/.cache/cargo-${{ matrix.origin }}
             ${{ github.workspace }}/.cache/ccache-${{ matrix.origin }}
             ${{ github.workspace }}/.cache/sccache-${{ matrix.origin }}
-          key: ${{ steps.ccache-key.outputs.key }}
-          restore-keys: ${{ steps.ccache-key.outputs.prefix }}
+          key: ${{ steps.compiler-cache-key.outputs.key }}
+          restore-keys: ${{ steps.compiler-cache-key.outputs.prefix }}
       - name: Build packages missing from the published APK repository
         env:
           ARCH: ${{ matrix.arch }}
@@ -185,8 +185,8 @@ jobs:
                 --sccache-dir /home/builder/.cache/sccache
       - name: Report compiler cache metrics
         env:
-          CACHE_HIT: ${{ steps.ccache.outputs.cache-hit }}
-          CACHE_MATCHED_KEY: ${{ steps.ccache.outputs.cache-matched-key }}
+          CACHE_HIT: ${{ steps.compiler-cache.outputs.cache-hit }}
+          CACHE_MATCHED_KEY: ${{ steps.compiler-cache.outputs.cache-matched-key }}
         run: |
           metrics="$RUNNER_TEMP/new/metrics/${{ matrix.arch }}/${{ matrix.origin }}/build.txt"
           if [ -f "$metrics" ]; then
@@ -232,7 +232,7 @@ jobs:
             ${{ github.workspace }}/.cache/cargo-${{ matrix.origin }}
             ${{ github.workspace }}/.cache/ccache-${{ matrix.origin }}
             ${{ github.workspace }}/.cache/sccache-${{ matrix.origin }}
-          key: ${{ steps.ccache-key.outputs.key }}
+          key: ${{ steps.compiler-cache-key.outputs.key }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: steps.stage.outputs.built == 'true'
         with:

@@ -23,10 +23,13 @@ class BranchProtectionTest(unittest.TestCase):
         self.assertIn('Protect gh-pages write path', SCRIPT)
         self.assertIn('refs/heads/main', SCRIPT)
         self.assertIn('refs/heads/gh-pages', SCRIPT)
+        self.assertIn('include == [$ref]', SCRIPT)
+        self.assertIn('exclude == []', SCRIPT)
         self.assertIn('CI / gate', SCRIPT)
         self.assertIn('required_approving_review_count', SCRIPT)
         self.assertIn('non_fast_forward', SCRIPT)
         self.assertIn('DeployKey', SCRIPT)
+        self.assertIn('bypass_actors[]?] | length == 1', SCRIPT)
         self.assertIn('bypass_mode == "always"', SCRIPT)
 
     def test_verifier_is_posix_sh_clean(self):

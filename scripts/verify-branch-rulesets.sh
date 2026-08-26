@@ -58,12 +58,14 @@ check_ruleset() {
     --arg require_status "$_vbr_require_status" '
       .enforcement == "active" and
       .target == "branch" and
-      (.conditions.ref_name.include | index($ref) != null) and
+      (.conditions.ref_name.include == [$ref]) and
+      (.conditions.ref_name.exclude == []) and
       ([.rules[]?.type] | index("pull_request") != null) and
       ([.rules[]? | select(.type == "pull_request") |
         .parameters.required_approving_review_count] | index(1) != null) and
       ([.rules[]?.type] | index("non_fast_forward") != null) and
       ([.rules[]?.type] | index("deletion") != null) and
+      ([.bypass_actors[]?] | length == 1) and
       ([.bypass_actors[]? |
         select(.actor_type == "DeployKey" and .bypass_mode == "always")] | length == 1) and
       (if $require_status == "true" then
