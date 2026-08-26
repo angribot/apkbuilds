@@ -1,12 +1,13 @@
 # Build package origins incrementally and independently
 
-Only package origins whose APKBUILD has changed since the last push to main
-enter the build pipeline; the rest are skipped without fetching the published
-APKINDEX. Each (architecture, package origin) pair runs as an independent CI
-job, so a slow source build never blocks a fast binary repackage. Persistent
-caches for source distfiles and C/C++ compilation carry across runs, turning
-cold builds into incremental ones. A periodic full rebuild catches drift
-that change detection misses, such as a toolchain upgrade in alpine:edge.
+Only package origins whose package inputs have changed since the last push to
+main enter the build pipeline; the rest are skipped without fetching the
+published APKINDEX because unchanged package origins need no new family.
+Every version-controlled file below an origin is a package input, including
+patches and service init scripts. Each (architecture, package origin) pair runs
+as an independent CI job, while persistent source-distfile and C/C++ caches
+keep builds incremental; a periodic full rebuild catches drift that change
+detection misses, such as a toolchain upgrade in alpine:edge.
 
 A full iteration over all origins — downloading the published index,
 verifying every already-published APK, and comparing package-family sets —

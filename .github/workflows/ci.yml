@@ -135,12 +135,17 @@ jobs:
       # Restore the newest compatible snapshot, then save this build under a
       # unique key. GitHub Actions cache entries are immutable, so the save key
       # must never reuse the compatibility prefix itself.
+      - name: Compute ccache cache keys
+        id: ccache-key
+        run: |
+          echo "prefix=apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-" >> "$GITHUB_OUTPUT"
+          echo "key=apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-${{ hashFiles(format('packages/{0}/**', matrix.origin)) }}-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
       - name: Restore ccache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.cache/ccache-${{ matrix.origin }}
-          key: apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-${{ hashFiles(format('packages/{0}/**', matrix.origin)) }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-
+          key: ${{ steps.ccache-key.outputs.key }}
+          restore-keys: ${{ steps.ccache-key.outputs.prefix }}
       - name: Build packages missing from the published APK repository
         env:
           ARCH: ${{ matrix.arch }}
@@ -262,7 +267,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.cache/ccache-${{ matrix.origin }}
-          key: apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-${{ hashFiles(format('packages/{0}/**', matrix.origin)) }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ${{ steps.ccache-key.outputs.key }}
       - name: Stage the built packages
         id: stage
         run: |

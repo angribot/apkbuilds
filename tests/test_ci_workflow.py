@@ -69,10 +69,13 @@ class PackageOriginBuildTest(unittest.TestCase):
         self.assertNotIn(" bash", install_step)
 
     def test_ccache_snapshots_use_unique_keys_with_compatible_fallback(self):
-        restore_start = WORKFLOW.index("- name: Restore ccache")
+        key_start = WORKFLOW.index("- name: Compute ccache cache keys")
+        restore_start = WORKFLOW.index("- name: Restore ccache", key_start)
         save_start = WORKFLOW.index("- name: Save ccache", restore_start)
+        stage_start = WORKFLOW.index("- name: Stage", save_start)
+        key_step = WORKFLOW[key_start:restore_start]
         restore = WORKFLOW[restore_start:save_start]
-        save = WORKFLOW[save_start : WORKFLOW.index("- name: Stage", save_start)]
+        save = WORKFLOW[save_start:stage_start]
         prefix = (
             "apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-"
             "${{ runner.os }}-"
@@ -81,10 +84,11 @@ class PackageOriginBuildTest(unittest.TestCase):
             "${{ hashFiles(format('packages/{0}/**', matrix.origin)) }}-"
             "${{ github.run_id }}-${{ github.run_attempt }}"
         )
-        self.assertIn(f"key: {prefix}{unique_suffix}", restore)
-        self.assertIn(f"restore-keys: {prefix}", restore)
-        self.assertIn(f"key: {prefix}{unique_suffix}", save)
-        self.assertNotIn("key: " + prefix + "\n", save)
+        self.assertIn(f'echo "prefix={prefix}"', key_step)
+        self.assertIn(f'echo "key={prefix}{unique_suffix}"', key_step)
+        self.assertIn("key: ${{ steps.ccache-key.outputs.key }}", restore)
+        self.assertIn("restore-keys: ${{ steps.ccache-key.outputs.prefix }}", restore)
+        self.assertIn("key: ${{ steps.ccache-key.outputs.key }}", save)
 
     def test_build_uses_complete_declared_and_published_families(self):
         self.assertIn("abuild listpkg", WORKFLOW)
