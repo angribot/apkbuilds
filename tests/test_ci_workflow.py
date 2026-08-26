@@ -17,18 +17,21 @@ MERGER = MERGER_PATH.read_text()
 class PackageOriginBuildTest(unittest.TestCase):
     def test_manual_dispatch_plans_the_selected_revision(self):
         self.assertIn("revision:", WORKFLOW)
-        self.assertIn("ref: ${{ inputs.revision || github.ref }}", WORKFLOW)
+        self.assertIn("base_revision:", WORKFLOW)
+        self.assertEqual(WORKFLOW.count("ref: ${{ inputs.revision || github.sha }}"), 5)
         plan = WORKFLOW[WORKFLOW.index("  plan:") : WORKFLOW.index("\n  build:")]
         self.assertIn("REVISION: ${{ inputs.revision || github.sha }}", plan)
-        self.assertIn('git rev-parse "$REVISION^"', plan)
-        self.assertIn('git diff --name-only "$parent" "$REVISION"', plan)
-        self.assertIn('has_origins=false', plan)
-        self.assertIn('matrix={"include":[]}', plan)
+        self.assertIn("BASE_REVISION: ${{ inputs.base_revision }}", plan)
+        self.assertIn(
+            "MAIN_REVISION: origin/${{ github.event.repository.default_branch }}",
+            plan,
+        )
+        self.assertIn("run: sh scripts/plan-origins.sh", plan)
 
     def test_full_dispatch_still_plans_all_origins(self):
         plan = WORKFLOW[WORKFLOW.index("  plan:") : WORKFLOW.index("\n  build:")]
-        self.assertIn('[ "$EVENT" = "schedule" ] || [ "$FULL" = "true" ]', plan)
-        self.assertIn("origins=$(all_origins)", plan)
+        self.assertIn("FULL: ${{ inputs.full || 'false' }}", plan)
+        self.assertIn("run: sh scripts/plan-origins.sh", plan)
 
     def test_check_container_needs_no_bash_for_update_script_tests(self):
         install_step = WORKFLOW[WORKFLOW.index("- name: Install tools") :]
