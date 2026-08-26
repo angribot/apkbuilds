@@ -44,6 +44,14 @@ class PackageOriginBuildTest(unittest.TestCase):
         self.assertIn('git show "$BASE_SHA:$apkbuild"', guard)
         self.assertNotIn('git diff --quiet "$BASE_SHA" -- "$apkbuild"', guard)
 
+    def test_plan_runs_in_parallel_with_repository_checks(self):
+        plan_start = WORKFLOW.index("  plan:")
+        build_start = WORKFLOW.index("\n  build:", plan_start)
+        plan = WORKFLOW[plan_start:build_start]
+        build = WORKFLOW[build_start : WORKFLOW.index("\n  sign:", build_start)]
+        self.assertNotIn("needs:", plan)
+        self.assertIn("needs: [check, plan]", build)
+
     def test_check_container_needs_no_bash_for_update_script_tests(self):
         install_step = WORKFLOW[WORKFLOW.index("- name: Install tools") :]
         install_step = install_step[: install_step.index("- uses: actions/checkout")]

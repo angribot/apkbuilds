@@ -105,7 +105,7 @@ jobs:
           exit "$status"
 
   plan:
-    needs: check
+    # Planning only reads the checkout, so it can overlap repository checks.
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
