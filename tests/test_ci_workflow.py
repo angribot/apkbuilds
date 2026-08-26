@@ -25,28 +25,29 @@ class PackageOriginBuildTest(unittest.TestCase):
     def test_manual_dispatch_plans_the_selected_revision(self):
         self.assertIn("revision:", WORKFLOW)
         self.assertIn("base_revision:", WORKFLOW)
-        self.assertEqual(WORKFLOW.count("ref: ${{ inputs.revision || github.sha }}"), 5)
-        plan = WORKFLOW[WORKFLOW.index("  plan:") : WORKFLOW.index("\n  build:")]
-        self.assertIn("REVISION: ${{ inputs.revision || github.sha }}", plan)
-        self.assertIn("BASE_REVISION: ${{ inputs.base_revision }}", plan)
+        self.assertEqual(WORKFLOW.count("ref: ${{ inputs.revision || github.sha }}"), 4)
+        check = WORKFLOW[WORKFLOW.index("  check:") : WORKFLOW.index("\n  build:")]
+        self.assertIn("REVISION: ${{ inputs.revision || github.sha }}", check)
+        self.assertIn("BASE_REVISION: ${{ inputs.base_revision }}", check)
         self.assertIn(
             "EXPLICIT_REVISION: ${{ inputs.revision != '' && 'true' || 'false' }}",
-            plan,
+            check,
         )
         self.assertIn(
             "MAIN_REVISION: origin/${{ github.event.repository.default_branch }}",
-            plan,
+            check,
         )
-        self.assertIn("run: sh scripts/plan-origins.sh", plan)
+        self.assertIn("run: sh scripts/plan-origins.sh", check)
+        self.assertNotIn("\n  plan:", WORKFLOW)
 
     def test_full_dispatch_still_plans_all_origins(self):
-        plan = WORKFLOW[WORKFLOW.index("  plan:") : WORKFLOW.index("\n  build:")]
-        self.assertIn("FULL: ${{ inputs.full || 'false' }}", plan)
-        self.assertIn("run: sh scripts/plan-origins.sh", plan)
+        check = WORKFLOW[WORKFLOW.index("  check:") : WORKFLOW.index("\n  build:")]
+        self.assertIn("FULL: ${{ inputs.full || 'false' }}", check)
+        self.assertIn("run: sh scripts/plan-origins.sh", check)
 
     def test_package_origin_inputs_require_declared_build_increase(self):
         guard_start = WORKFLOW.index("- name: Require a version increase")
-        guard = WORKFLOW[guard_start : WORKFLOW.index("\n\n  plan:", guard_start)]
+        guard = WORKFLOW[guard_start : WORKFLOW.index("\n\n  build:", guard_start)]
         self.assertIn("run: sh scripts/check-declared-build.sh", guard)
         self.assertIn(
             'git diff --no-renames --name-only "$BASE_SHA" -- packages/',
@@ -61,25 +62,30 @@ class PackageOriginBuildTest(unittest.TestCase):
             (ROOT / "scripts" / "check-declared-build.sh").read_text(),
         )
 
-    def test_plan_runs_in_parallel_with_repository_checks(self):
-        plan_start = WORKFLOW.index("  plan:")
-        build_start = WORKFLOW.index("\n  build:", plan_start)
-        plan = WORKFLOW[plan_start:build_start]
+    def test_validation_and_planning_share_one_checkout_and_job(self):
+        check_start = WORKFLOW.index("  check:")
+        build_start = WORKFLOW.index("\n  build:", check_start)
+        check = WORKFLOW[check_start:build_start]
         build = WORKFLOW[build_start : WORKFLOW.index("\n  sign:", build_start)]
-        self.assertNotIn("needs:", plan)
-        self.assertIn("needs: [check, plan]", build)
+        self.assertIn("outputs:", check)
+        self.assertIn("matrix: ${{ steps.set-matrix.outputs.matrix }}", check)
+        self.assertIn("has_origins: ${{ steps.set-matrix.outputs.has_origins }}", check)
+        self.assertIn("reconcile: ${{ steps.set-matrix.outputs.reconcile }}", check)
+        self.assertEqual(check.count("actions/checkout@"), 1)
+        self.assertIn("needs: check", build)
+        self.assertNotIn("needs: [check, plan]", build)
 
     def test_reconciliation_verifies_an_unchanged_published_snapshot(self):
-        plan_start = WORKFLOW.index("  plan:")
+        check_start = WORKFLOW.index("  check:")
         sign_start = WORKFLOW.index("\n  sign:")
-        plan = WORKFLOW[plan_start:sign_start]
+        check = WORKFLOW[check_start:sign_start]
         sign = WORKFLOW[sign_start : WORKFLOW.index("\n  verify:", sign_start)]
         self.assertIn(
-            "reconcile: ${{ steps.set-matrix.outputs.reconcile }}", plan
+            "reconcile: ${{ steps.set-matrix.outputs.reconcile }}", check
         )
-        self.assertIn("needs: [build, plan]", sign)
+        self.assertIn("needs: [build, check]", sign)
         self.assertIn(
-            "steps.merge.outputs.merged == 'true' ||\n          needs.plan.outputs.reconcile == 'true'",
+            "steps.merge.outputs.merged == 'true' ||\n          needs.check.outputs.reconcile == 'true'",
             sign,
         )
         self.assertNotIn("contents: write", sign)
@@ -99,10 +105,11 @@ class PackageOriginBuildTest(unittest.TestCase):
         gate_start = WORKFLOW.index("\n  gate:")
         gate = WORKFLOW[gate_start:]
         self.assertIn(
-            "needs: [check, plan, build, sign, verify, publish]", gate
+            "needs: [check, build, sign, verify, publish]", gate
         )
         self.assertIn("EVENT: ${{ github.event_name }}", gate)
-        self.assertIn("HAS_ORIGINS: ${{ needs.plan.outputs.has_origins }}", gate)
+        self.assertIn("HAS_ORIGINS: ${{ needs.check.outputs.has_origins }}", gate)
+        self.assertNotIn("needs.plan", gate)
         self.assertIn('test "$CHECK" = success', gate)
         self.assertIn('if [ "$HAS_ORIGINS" = true ]; then', gate)
         self.assertIn('test "$BUILD" = success', gate)

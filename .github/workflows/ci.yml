@@ -36,6 +36,10 @@ env:
 
 jobs:
   check:
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has_origins: ${{ steps.set-matrix.outputs.has_origins }}
+      reconcile: ${{ steps.set-matrix.outputs.reconcile }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     container: alpine:edge
@@ -87,20 +91,6 @@ jobs:
         # Publication skips a complete declared package family, so an edit
         # that forgets to bump pkgrel would never reach users.
         run: sh scripts/check-declared-build.sh
-
-  plan:
-    # Planning only reads the checkout, so it can overlap repository checks.
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-      has_origins: ${{ steps.set-matrix.outputs.has_origins }}
-      reconcile: ${{ steps.set-matrix.outputs.reconcile }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
-          ref: ${{ inputs.revision || github.sha }}
       - name: Compute changed origins
         id: set-matrix
         env:
@@ -115,12 +105,12 @@ jobs:
         run: sh scripts/plan-origins.sh
 
   build:
-    needs: [check, plan]
-    if: needs.plan.outputs.has_origins == 'true'
+    needs: check
+    if: needs.check.outputs.has_origins == 'true'
     timeout-minutes: 90
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+      matrix: ${{ fromJSON(needs.check.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -308,7 +298,7 @@ jobs:
           compression-level: 0
 
   sign:
-    needs: [build, plan]
+    needs: [build, check]
     if: github.ref_name == github.event.repository.default_branch
     outputs:
       snapshot_created: ${{ steps.snapshot.outputs.created }}
@@ -410,7 +400,7 @@ jobs:
       - name: Verify the APK repository without the private key
         if: >-
           steps.merge.outputs.merged == 'true' ||
-          needs.plan.outputs.reconcile == 'true'
+          needs.check.outputs.reconcile == 'true'
         run: |
           docker run --rm --network none \
             -v "$RUNNER_TEMP/pages:/pages:ro" \
@@ -438,7 +428,7 @@ jobs:
         id: snapshot
         if: >-
           steps.merge.outputs.merged == 'true' ||
-          needs.plan.outputs.reconcile == 'true'
+          needs.check.outputs.reconcile == 'true'
         run: echo 'created=true' >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: steps.snapshot.outputs.created == 'true'
@@ -559,15 +549,14 @@ jobs:
   # publication jobs.
   gate:
     if: always()
-    needs: [check, plan, build, sign, verify, publish]
+    needs: [check, build, sign, verify, publish]
     runs-on: ubuntu-latest
     steps:
       - name: Check required CI results
         env:
           EVENT: ${{ github.event_name }}
-          HAS_ORIGINS: ${{ needs.plan.outputs.has_origins }}
+          HAS_ORIGINS: ${{ needs.check.outputs.has_origins }}
           CHECK: ${{ needs.check.result }}
-          PLAN: ${{ needs.plan.result }}
           BUILD: ${{ needs.build.result }}
           SIGN: ${{ needs.sign.result }}
           VERIFY: ${{ needs.verify.result }}
@@ -575,7 +564,6 @@ jobs:
         run: |
           status=0
           test "$CHECK" = success || status=1
-          test "$PLAN" = success || status=1
           if [ "$HAS_ORIGINS" = true ]; then
             test "$BUILD" = success || status=1
           fi
