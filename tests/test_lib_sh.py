@@ -276,6 +276,13 @@ esac
         self.assertNotEqual(completed.returncode, 0)
         self.assertEqual((self.root / "update-count").read_text().strip(), "1")
 
+    def test_permanent_fetch_failure_is_not_retried(self):
+        self.env["APK_UPDATE_FAILURES"] = "3"
+        self.env["APK_UPDATE_ERROR"] = "fetch https://mirror.example failed: 403 Forbidden"
+        completed = self.run_helper_with_env("apk_update_with_retry")
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual((self.root / "update-count").read_text().strip(), "1")
+
     def test_resolver_failure_is_not_retried_and_logs_build_identity(self):
         self.env["APK_ADD_EXIT"] = "1"
         completed = self.run_helper_with_env(

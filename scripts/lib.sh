@@ -161,7 +161,7 @@ apk_update_with_retry() {
     fi
     cat "$_aur_output" >&2
     if ! grep -Eiq \
-      'temporary error|try again|timed out|timeout|network|connection (refused|reset|timed out)|could not resolve|no route to host|fetch .*failed' \
+      'temporary error|try again|timed out|timeout|network|connection (refused|reset|timed out)|could not resolve|no route to host' \
       "$_aur_output"; then
       rm -f "$_aur_output"
       printf 'apk index retrieval failed without retry\n' >&2
