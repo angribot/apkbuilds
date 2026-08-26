@@ -22,6 +22,9 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.repository.default_branch }}
+          # The dedicated deploy key is the updater's explicit bypass for
+          # main's pull-request protection; GITHUB_TOKEN cannot bypass it.
+          ssh-key: ${{ secrets.UPDATE_DEPLOY_KEY }}
       - name: Check and commit eligible upstream releases
         env:
           GH_TOKEN: ${{ github.token }}

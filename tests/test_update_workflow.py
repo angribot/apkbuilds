@@ -25,6 +25,7 @@ class PackageUpdateTest(unittest.TestCase):
         self.assertIn("sh scripts/update-packages.sh", WORKFLOW)
         self.assertIn("fetch-depth: 0", WORKFLOW)
         self.assertIn("ref: ${{ github.event.repository.default_branch }}", WORKFLOW)
+        self.assertIn("ssh-key: ${{ secrets.UPDATE_DEPLOY_KEY }}", WORKFLOW)
         self.assertNotIn("strategy:", WORKFLOW)
         self.assertNotIn("matrix:", WORKFLOW)
 
@@ -44,9 +45,13 @@ class PackageUpdateTest(unittest.TestCase):
         self.assertIn("final_commit=$(git rev-parse origin/main)", UPDATER)
         self.assertIn("gh workflow run ci.yml --ref main", UPDATER)
         self.assertIn(
-            '-f base_revision="$initial_commit" -f revision="$final_commit"',
-            UPDATER,
+            'dispatch_publication "$initial_commit" "$final_commit"', UPDATER
         )
+        self.assertIn(
+            '-f base_revision="$_dp_initial_commit"', UPDATER
+        )
+        self.assertIn("DISPATCH_ATTEMPTS=3", UPDATER)
+        self.assertIn('while [ "$_dp_attempt" -le "$DISPATCH_ATTEMPTS" ]', UPDATER)
         self.assertIn("could not dispatch CI publication", UPDATER)
 
     def test_workflow_stages_each_apkbuild_and_never_force_pushes(self):

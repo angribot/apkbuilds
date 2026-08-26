@@ -1,8 +1,8 @@
 #!/bin/sh
 # Install the build toolchain and create the unprivileged abuild user.
 # Sourced by the ci.yml build job so its toolchain stays in one place.
-# Runs as root inside an alpine container. Arguments are directories to hand
-# to the builder user.
+# Runs as root inside an alpine container. Arguments are writable directories
+# to hand to the builder user; never pass the source checkout here.
 set -eu
 apk add --no-cache alpine-sdk ccache curl python3
 adduser -D builder

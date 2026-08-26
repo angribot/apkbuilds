@@ -3,15 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-    paths:
-      - '**'
-      - '!**.md'
-      - 'packages/**'
   pull_request:
-    paths:
-      - '**'
-      - '!**.md'
-      - 'packages/**'
   workflow_dispatch:
     inputs:
       full:
@@ -27,7 +19,8 @@ on:
         type: string
         default: ''
   schedule:
-    - cron: '0 0 * * 0'
+    # Reconcile the published snapshot daily, even when no updater changed main.
+    - cron: '0 0 * * *'
 
 permissions:
   contents: read
@@ -59,8 +52,8 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Create the builder user
         # `abuild` refuses to run as root, and the container's only user is
-        # root. Reuse the build job's setup so both jobs get the same user.
-        run: . scripts/prepare-builder.sh "$GITHUB_WORKSPACE"
+        # root. The checkout is readable by builder and must not be re-owned.
+        run: . scripts/prepare-builder.sh
       - name: Lint APKBUILDs
         run: |
           # Feed the script over stdin: nesting it inside `su -c '...'` would
@@ -102,6 +95,7 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       has_origins: ${{ steps.set-matrix.outputs.has_origins }}
+      reconcile: ${{ steps.set-matrix.outputs.reconcile }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -167,14 +161,19 @@ jobs:
             -e ORIGIN \
             -e BRANCH \
             -e PUBLISHED="$PAGES_URL/edge/${{ matrix.arch }}" \
-            -v "$GITHUB_WORKSPACE:/workspace" \
+            -e SOURCE_REVISION="${{ inputs.revision || github.sha }}" \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
             -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \
             -v "$RUNNER_TEMP/new:/new" \
             -v "$GITHUB_WORKSPACE/.cache/distfiles:/var/cache/distfiles" \
             -v "$GITHUB_WORKSPACE/.cache/ccache-${{ matrix.origin }}:/home/builder/.cache/ccache" \
             -w /workspace \
             alpine:edge sh -euxc '
-              sh scripts/prepare-builder.sh /new /workspace
+              mkdir -p /new/source
+              cp -R "/workspace/packages/$ORIGIN" /new/source/
+              sh scripts/prepare-builder.sh \
+                /new /var/cache/distfiles /home/builder/.cache/ccache \
+                "/new/source/$ORIGIN"
               . scripts/lib.sh
 
               # Published package families are trusted only after their index
@@ -196,10 +195,26 @@ jobs:
               expected="/tmp/expected-$ORIGIN"
               published="/tmp/published-$ORIGIN"
               su builder -c \
-                "cd /workspace/packages/$ORIGIN && abuild listpkg" \
+                "cd /new/source/$ORIGIN && abuild listpkg" \
                 > "$expected"
               apkindex_origin_apks \
                 /tmp/published/APKINDEX "$ORIGIN" > "$published"
+              declared=$(apkbuild_field pkgver "packages/$ORIGIN/APKBUILD")-r$(
+                apkbuild_field pkgrel "packages/$ORIGIN/APKBUILD"
+              )
+              versions="/tmp/published-versions-$ORIGIN"
+              apkindex_origin_versions \
+                /tmp/published/APKINDEX "$ORIGIN" > "$versions"
+              published_builds=
+              while IFS= read -r version; do
+                [ -n "$published_builds" ] && published_builds="$published_builds "
+                published_builds="$published_builds$version"
+              done < "$versions"
+              [ -n "$published_builds" ] || published_builds='<none>'
+              if ! package_sets_equal "$expected" "$published"; then
+                printf "::notice::%s package set mismatch: source revision=%s declared build=%s published build(s)=%s\n" \
+                  "$ORIGIN" "$SOURCE_REVISION" "$declared" "$published_builds"
+              fi
               if package_sets_equal "$expected" "$published"; then
                 published_apks="/tmp/published/$ORIGIN"
                 mkdir -p "$published_apks"
@@ -209,24 +224,21 @@ jobs:
                     "$PUBLISHED/$package"
                   apk verify "$downloaded"
                 done < "$expected"
-                printf "==> %s package family already published\n" "$ORIGIN"
+                printf "==> %s package family already published: source revision=%s declared build=%s published build(s)=%s\n" \
+                  "$ORIGIN" "$SOURCE_REVISION" "$declared" "$published_builds"
                 exit 0
               fi
 
-              declared=$(apkbuild_field pkgver "packages/$ORIGIN/APKBUILD")-r$(
-                apkbuild_field pkgrel "packages/$ORIGIN/APKBUILD"
-              )
-              versions="/tmp/published-versions-$ORIGIN"
-              apkindex_origin_versions \
-                /tmp/published/APKINDEX "$ORIGIN" > "$versions"
               if grep -Fx "$declared" "$versions" >/dev/null; then
+                printf "::error::%s build mismatch: source revision=%s declared build=%s published build(s)=%s\n" \
+                  "$ORIGIN" "$SOURCE_REVISION" "$declared" "$published_builds" >&2
                 printf "%s %s already published with a different package set\n" \
                   "$ORIGIN" "$declared" >&2
                 exit 1
               fi
 
               su builder -c \
-                "cd /workspace/packages/$ORIGIN && REPODEST=\"/new/$ORIGIN\" abuild -r"
+                "cd /new/source/$ORIGIN && REPODEST=\"/new/$ORIGIN\" abuild -r"
               built="/new/$ORIGIN/packages/$ARCH"
               actual="/tmp/actual-$ORIGIN"
               find "$built" -maxdepth 1 -type f -name "*.apk" \
@@ -296,10 +308,10 @@ jobs:
           compression-level: 0
 
   sign:
-    needs: build
+    needs: [build, plan]
     if: github.ref_name == github.event.repository.default_branch
     outputs:
-      snapshot_created: ${{ steps.merge.outputs.merged }}
+      snapshot_created: ${{ steps.snapshot.outputs.created }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release
@@ -396,7 +408,9 @@ jobs:
               done
             '
       - name: Verify the APK repository without the private key
-        if: steps.merge.outputs.merged == 'true'
+        if: >-
+          steps.merge.outputs.merged == 'true' ||
+          needs.plan.outputs.reconcile == 'true'
         run: |
           docker run --rm --network none \
             -v "$RUNNER_TEMP/pages:/pages:ro" \
@@ -420,8 +434,14 @@ jobs:
                 rm -rf "$work"
               done
             '
+      - name: Mark snapshot for verification
+        id: snapshot
+        if: >-
+          steps.merge.outputs.merged == 'true' ||
+          needs.plan.outputs.reconcile == 'true'
+        run: echo 'created=true' >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        if: steps.merge.outputs.merged == 'true'
+        if: steps.snapshot.outputs.created == 'true'
         with:
           name: signed-repository
           # include-hidden-files is needed for .nojekyll, which also drags in
@@ -484,8 +504,6 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    permissions:
-      contents: write
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -493,7 +511,7 @@ jobs:
           path: pages
       - name: Push the APK repository to gh-pages
         env:
-          GH_TOKEN: ${{ github.token }}
+          PAGES_DEPLOY_KEY: ${{ secrets.PAGES_DEPLOY_KEY }}
         run: |
           cd pages
           # The artifact comes from a clone, so drop any Git metadata
@@ -502,10 +520,47 @@ jobs:
           git init -q --initial-branch=gh-pages
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git remote add origin \
-            "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git"
+          printf '%s\n' "$PAGES_DEPLOY_KEY" > "$RUNNER_TEMP/pages-deploy-key"
+          chmod 600 "$RUNNER_TEMP/pages-deploy-key"
+          trap 'rm -f "$RUNNER_TEMP/pages-deploy-key"' EXIT
+          export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/pages-deploy-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git remote add origin "git@github.com:$GITHUB_REPOSITORY.git"
           git add -A
           # A single orphan commit keeps the branch from accumulating the
           # history of every .apk ever published.
           git commit -q -m "Publish $GITHUB_SHA"
           git push -q --force origin gh-pages
+
+  # Protect main with this stable check instead of the dynamic package matrix.
+  # Publication jobs are required only when this run planned package origins;
+  # pull requests and documentation-only pushes correctly accept skipped
+  # publication jobs.
+  gate:
+    if: always()
+    needs: [check, plan, build, sign, verify, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check required CI results
+        env:
+          EVENT: ${{ github.event_name }}
+          HAS_ORIGINS: ${{ needs.plan.outputs.has_origins }}
+          CHECK: ${{ needs.check.result }}
+          PLAN: ${{ needs.plan.result }}
+          BUILD: ${{ needs.build.result }}
+          SIGN: ${{ needs.sign.result }}
+          VERIFY: ${{ needs.verify.result }}
+          PUBLISH: ${{ needs.publish.result }}
+        run: |
+          status=0
+          test "$CHECK" = success || status=1
+          test "$PLAN" = success || status=1
+          if [ "$HAS_ORIGINS" = true ]; then
+            test "$BUILD" = success || status=1
+          fi
+          if [ "$EVENT" = pull_request ] || [ "$HAS_ORIGINS" != true ]; then
+            exit "$status"
+          fi
+          test "$SIGN" = success || status=1
+          test "$VERIFY" = success || status=1
+          test "$PUBLISH" = success || status=1
+          exit "$status"

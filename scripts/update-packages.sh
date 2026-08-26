@@ -5,6 +5,7 @@
 set -u
 
 PUSH_ATTEMPTS=3
+DISPATCH_ATTEMPTS=3
 failures=0
 fatal_failure=0
 has_updates=0
@@ -56,6 +57,24 @@ push_commit() {
   done
 
   echo "$_pc_package_origin push failed after $PUSH_ATTEMPTS attempts" >&2
+  return 1
+}
+
+dispatch_publication() {
+  _dp_initial_commit="$1"
+  _dp_final_commit="$2"
+
+  _dp_attempt=1
+  while [ "$_dp_attempt" -le "$DISPATCH_ATTEMPTS" ]; do
+    if gh workflow run ci.yml --ref main \
+        -f base_revision="$_dp_initial_commit" \
+        -f revision="$_dp_final_commit" -f full=false; then
+      return 0
+    fi
+    echo "CI publication dispatch attempt $_dp_attempt failed" >&2
+    _dp_attempt=$((_dp_attempt + 1))
+  done
+
   return 1
 }
 
@@ -146,9 +165,8 @@ if [ "$has_updates" -eq 1 ]; then
   if [ -z "$final_commit" ]; then
     echo "::error::could not dispatch CI publication without a main commit" >&2
     failures=1
-  elif ! gh workflow run ci.yml --ref main \
-      -f base_revision="$initial_commit" -f revision="$final_commit" -f full=false; then
-    echo "::error::could not dispatch CI publication for $final_commit" >&2
+  elif ! dispatch_publication "$initial_commit" "$final_commit"; then
+    echo "::error::could not dispatch CI publication for $final_commit after $DISPATCH_ATTEMPTS attempts" >&2
     failures=1
   fi
 fi

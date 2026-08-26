@@ -6,6 +6,7 @@ set -eu
 . scripts/lib.sh
 
 changed="$RUNNER_TEMP/changed-files"
+reconcile=false
 if [ "$EVENT" = "workflow_dispatch" ]; then
   if ! target_commit=$(git rev-parse "$REVISION^{commit}"); then
     printf '::error::invalid selected revision %s\n' "$REVISION" >&2
@@ -28,6 +29,7 @@ if [ "$EVENT" = "schedule" ] || [ "$FULL" = "true" ] || {
 }; then
   # A manual run without a selected range is a reconciliation run. The
   # published snapshot may lag behind more than the current parent commit.
+  reconcile=true
   origins=$(all_origins)
 elif [ "$EVENT" = "pull_request" ]; then
   git diff --no-renames --name-only "$BASE" -- packages/ > "$changed"
@@ -68,6 +70,7 @@ for origin in $origins; do
   done
 done
 
+echo "reconcile=$reconcile" >> "$GITHUB_OUTPUT"
 if [ -z "$items" ]; then
   echo "has_origins=false" >> "$GITHUB_OUTPUT"
   echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"

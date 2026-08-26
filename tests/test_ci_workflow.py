@@ -15,13 +15,12 @@ MERGER = MERGER_PATH.read_text()
 
 
 class PackageOriginBuildTest(unittest.TestCase):
-    def test_package_markdown_inputs_still_trigger_ci(self):
+    def test_all_pull_request_changes_trigger_the_required_gate(self):
         triggers = WORKFLOW[: WORKFLOW.index("permissions:")]
         self.assertNotIn("paths-ignore:", triggers)
-        self.assertEqual(triggers.count("paths:"), 2)
-        self.assertEqual(triggers.count("- '**'"), 2)
-        self.assertEqual(triggers.count("- '!**.md'"), 2)
-        self.assertEqual(triggers.count("- 'packages/**'"), 2)
+        self.assertNotIn("paths:", triggers)
+        self.assertIn("push:\n    branches: [main]", triggers)
+        self.assertIn("pull_request:\n", triggers)
 
     def test_manual_dispatch_plans_the_selected_revision(self):
         self.assertIn("revision:", WORKFLOW)
@@ -70,11 +69,77 @@ class PackageOriginBuildTest(unittest.TestCase):
         self.assertNotIn("needs:", plan)
         self.assertIn("needs: [check, plan]", build)
 
+    def test_reconciliation_verifies_an_unchanged_published_snapshot(self):
+        plan_start = WORKFLOW.index("  plan:")
+        sign_start = WORKFLOW.index("\n  sign:")
+        plan = WORKFLOW[plan_start:sign_start]
+        sign = WORKFLOW[sign_start : WORKFLOW.index("\n  verify:", sign_start)]
+        self.assertIn(
+            "reconcile: ${{ steps.set-matrix.outputs.reconcile }}", plan
+        )
+        self.assertIn("needs: [build, plan]", sign)
+        self.assertIn(
+            "steps.merge.outputs.merged == 'true' ||\n          needs.plan.outputs.reconcile == 'true'",
+            sign,
+        )
+        self.assertNotIn("contents: write", sign)
+        self.assertIn("id: snapshot", sign)
+        self.assertIn("if: steps.snapshot.outputs.created == 'true'", sign)
+
+    def test_build_mismatch_logs_source_and_build_identities(self):
+        self.assertIn(
+            '-e SOURCE_REVISION="${{ inputs.revision || github.sha }}"', WORKFLOW
+        )
+        self.assertIn("source revision=", WORKFLOW)
+        self.assertIn("declared build=", WORKFLOW)
+        self.assertIn("published build(s)=", WORKFLOW)
+        self.assertIn("package set mismatch:", WORKFLOW)
+
+    def test_workflow_exposes_a_stable_branch_protection_gate(self):
+        gate_start = WORKFLOW.index("\n  gate:")
+        gate = WORKFLOW[gate_start:]
+        self.assertIn(
+            "needs: [check, plan, build, sign, verify, publish]", gate
+        )
+        self.assertIn("EVENT: ${{ github.event_name }}", gate)
+        self.assertIn("HAS_ORIGINS: ${{ needs.plan.outputs.has_origins }}", gate)
+        self.assertIn('test "$CHECK" = success', gate)
+        self.assertIn('if [ "$HAS_ORIGINS" = true ]; then', gate)
+        self.assertIn('test "$BUILD" = success', gate)
+        self.assertIn('test "$PUBLISH" = success', gate)
+
+    def test_publication_uses_an_explicit_deploy_key(self):
+        publish_start = WORKFLOW.index("  publish:")
+        publish = WORKFLOW[publish_start:]
+        self.assertIn(
+            "PAGES_DEPLOY_KEY: ${{ secrets.PAGES_DEPLOY_KEY }}", publish
+        )
+        self.assertIn('git remote add origin "git@github.com:$GITHUB_REPOSITORY.git"', publish)
+        self.assertIn("git push -q --force origin gh-pages", publish)
+
     def test_check_container_needs_no_bash_for_update_script_tests(self):
         install_step = WORKFLOW[WORKFLOW.index("- name: Install tools") :]
         install_step = install_step[: install_step.index("- uses: actions/checkout")]
         self.assertIn("apk add --no-cache", install_step)
         self.assertNotIn(" bash", install_step)
+
+    def test_build_container_cannot_change_checkout_ownership(self):
+        build_start = WORKFLOW.index("  build:")
+        sign_start = WORKFLOW.index("\n  sign:", build_start)
+        build = WORKFLOW[build_start:sign_start]
+        self.assertIn('-v "$GITHUB_WORKSPACE:/workspace:ro"', build)
+        self.assertIn('cp -R "/workspace/packages/$ORIGIN" /new/source/', build)
+        self.assertIn(
+            "sh scripts/prepare-builder.sh \\\n                /new /var/cache/distfiles /home/builder/.cache/ccache \\\n                \"/new/source/$ORIGIN\"",
+            build,
+        )
+        self.assertIn('cd /new/source/$ORIGIN && REPODEST=', build)
+        self.assertNotIn("prepare-builder.sh /new /workspace", build)
+
+    def test_builder_setup_documents_writable_directory_boundary(self):
+        setup = (ROOT / "scripts" / "prepare-builder.sh").read_text()
+        self.assertIn("writable directories", setup)
+        self.assertIn('chown -R builder:builder "$directory"', setup)
 
     def test_ccache_snapshots_use_unique_keys_with_compatible_fallback(self):
         key_start = WORKFLOW.index("- name: Compute ccache cache keys")
@@ -192,7 +257,7 @@ class PackageOriginReplacementTest(unittest.TestCase):
         self.assertLess(verify_job, publish_job)
         self.assertIn("verify:\n    needs: sign", WORKFLOW)
         self.assertIn("publish:\n    needs: verify", WORKFLOW)
-        self.assertIn("snapshot_created: ${{ steps.merge.outputs.merged }}", WORKFLOW)
+        self.assertIn("snapshot_created: ${{ steps.snapshot.outputs.created }}", WORKFLOW)
         staged_verification = WORKFLOW[verify_job:publish_job]
         self.assertIn("if: needs.sign.outputs.snapshot_created == 'true'", staged_verification)
         self.assertNotIn("continue-on-error", staged_verification)

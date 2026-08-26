@@ -88,6 +88,15 @@ if package_origin in updated:
         gh.write_text(
             """#!/bin/sh
 printf '%s\\n' "$*" >> "$GH_INVOCATIONS"
+count=0
+if [ -e "$GH_ATTEMPTS" ]; then
+    count=$(cat "$GH_ATTEMPTS")
+fi
+count=$((count + 1))
+printf '%s\\n' "$count" > "$GH_ATTEMPTS"
+if [ "$count" -le "${GH_FAIL_FIRST:-0}" ]; then
+    exit 1
+fi
 if [ "${GH_EXIT:-0}" -ne 0 ]; then
     exit "$GH_EXIT"
 fi
@@ -97,6 +106,7 @@ fi
         return {
             "PATH": os.pathsep.join([str(fake_bin), os.environ["PATH"]]),
             "GH_INVOCATIONS": str(invocations),
+            "GH_ATTEMPTS": str(root / "gh-attempts"),
         }
 
     def run_updater(self, root, env=None):
@@ -226,6 +236,16 @@ exec "$REAL_GIT" "$@"
         self.assertIn("pkgver=2.0.0", self.remote_file(root, "packages/realm/APKBUILD"))
         self.assertIn("gnupg push failed after 3 attempts", completed.stderr)
 
+    def test_dispatch_retries_after_a_transient_failure(self):
+        root, _ = self.create_checkout()
+        env = self.install_fake_gh(root)
+        env.update({"UPDATED_ORIGINS": "gnupg", "GH_FAIL_FIRST": "2"})
+
+        completed = self.run_updater(root, env)
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(len((root / "gh-invocations").read_text().splitlines()), 3)
+
     def test_dispatch_failure_is_visible_after_a_successful_update(self):
         root, _ = self.create_checkout()
         env = self.install_fake_gh(root)
@@ -235,7 +255,8 @@ exec "$REAL_GIT" "$@"
 
         self.assertEqual(completed.returncode, 1)
         self.assertIn("could not dispatch CI publication", completed.stderr)
-        self.assertEqual(len((root / "gh-invocations").read_text().splitlines()), 1)
+        self.assertIn("3 attempts", completed.stderr)
+        self.assertEqual(len((root / "gh-invocations").read_text().splitlines()), 3)
         self.assertIn("pkgver=2.0.0", self.remote_file(root, "packages/gnupg/APKBUILD"))
 
     def test_stale_main_is_rebased_and_pushed_without_force(self):

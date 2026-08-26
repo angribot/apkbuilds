@@ -122,6 +122,7 @@ class PlanOriginsTest(unittest.TestCase):
             {item["origin"] for item in matrix["include"]}, {"alpha", "beta"}
         )
         self.assertEqual(outputs["has_origins"], "true")
+        self.assertEqual(outputs["reconcile"], "false")
 
     def test_manual_dispatch_defaults_to_selected_revision_parent(self):
         completed = self.run_plan(revision=self.beta_commit)
@@ -129,6 +130,7 @@ class PlanOriginsTest(unittest.TestCase):
         outputs = self.plan_outputs(completed)
         matrix = json.loads(outputs["matrix"])
         self.assertEqual({item["origin"] for item in matrix["include"]}, {"beta"})
+        self.assertEqual(outputs["reconcile"], "false")
 
     def test_auxiliary_package_input_selects_its_origin(self):
         completed = self.run_plan(
@@ -174,6 +176,7 @@ class PlanOriginsTest(unittest.TestCase):
         )
 
         outputs = self.plan_outputs(completed)
+        self.assertEqual(outputs["reconcile"], "true")
         matrix = json.loads(outputs["matrix"])
         self.assertEqual(
             {item["origin"] for item in matrix["include"]}, {"alpha", "beta"}
@@ -183,6 +186,7 @@ class PlanOriginsTest(unittest.TestCase):
         completed = self.run_plan(revision=self.beta_commit, full="true")
 
         outputs = self.plan_outputs(completed)
+        self.assertEqual(outputs["reconcile"], "true")
         matrix = json.loads(outputs["matrix"])
         self.assertEqual(
             {item["origin"] for item in matrix["include"]}, {"alpha", "beta"}
@@ -196,6 +200,7 @@ class PlanOriginsTest(unittest.TestCase):
 
         outputs = self.plan_outputs(completed)
         self.assertEqual(outputs["has_origins"], "false")
+        self.assertEqual(outputs["reconcile"], "false")
         self.assertEqual(json.loads(outputs["matrix"]), {"include": []})
 
     def test_off_main_revision_fails_loudly(self):
