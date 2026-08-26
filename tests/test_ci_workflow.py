@@ -15,6 +15,12 @@ MERGER = MERGER_PATH.read_text()
 
 
 class PackageOriginBuildTest(unittest.TestCase):
+    def test_check_container_installs_bash_for_update_script_tests(self):
+        install_step = WORKFLOW[WORKFLOW.index("- name: Install tools") :]
+        install_step = install_step[: install_step.index("- uses: actions/checkout")]
+        self.assertIn("apk add --no-cache", install_step)
+        self.assertIn(" bash", install_step)
+
     def test_build_uses_complete_declared_and_published_families(self):
         self.assertIn("abuild listpkg", WORKFLOW)
         self.assertIn("apkindex_origin_apks", WORKFLOW)
