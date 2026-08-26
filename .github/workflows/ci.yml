@@ -85,24 +85,9 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          # Publication skips a complete declared package family, so an edit
-          # that forgets to bump pkgrel would never reach users.
-          . scripts/lib.sh
-          status=0
-          for origin in $(all_origins); do
-            apkbuild="packages/$origin/APKBUILD"
-            git diff --quiet "$BASE_SHA" -- "packages/$origin" && continue
-            previous="$RUNNER_TEMP/$origin-APKBUILD"
-            git show "$BASE_SHA:$apkbuild" > "$previous" 2>/dev/null || continue
-            old=$(apkbuild_field pkgver "$previous")-r$(apkbuild_field pkgrel "$previous")
-            new=$(apkbuild_field pkgver "$apkbuild")-r$(apkbuild_field pkgrel "$apkbuild")
-            if [ "$(apk version -t "$new" "$old")" != '>' ]; then
-              echo "$origin must increase pkgver or pkgrel: $old -> $new" >&2
-              status=1
-            fi
-          done
-          exit "$status"
+        # Publication skips a complete declared package family, so an edit
+        # that forgets to bump pkgrel would never reach users.
+        run: sh scripts/check-package-versions.sh
 
   plan:
     # Planning only reads the checkout, so it can overlap repository checks.
