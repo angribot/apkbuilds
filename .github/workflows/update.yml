@@ -23,4 +23,4 @@ jobs:
       - name: Check and commit eligible upstream releases
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: bash scripts/update-packages.sh
+        run: sh scripts/update-packages.sh

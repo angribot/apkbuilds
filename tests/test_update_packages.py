@@ -85,7 +85,7 @@ if package_origin in updated:
         if env:
             merged_env.update(env)
         return subprocess.run(
-            ["bash", "scripts/update-packages.sh"],
+            ["sh", "scripts/update-packages.sh"],
             cwd=root,
             env=merged_env,
             capture_output=True,

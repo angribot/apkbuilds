@@ -36,7 +36,7 @@ jobs:
       - name: Install tools
         # The aports lint image requires registry authentication, so install
         # the same checks onto a plain alpine:edge instead.
-        run: apk add --no-cache alpine-sdk atools-apkbuild-lint bash git python3 shellcheck
+        run: apk add --no-cache alpine-sdk atools-apkbuild-lint git python3 shellcheck
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
