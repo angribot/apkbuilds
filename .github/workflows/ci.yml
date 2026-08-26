@@ -92,7 +92,7 @@ jobs:
           status=0
           for origin in $(all_origins); do
             apkbuild="packages/$origin/APKBUILD"
-            git diff --quiet "$BASE_SHA" -- "$apkbuild" && continue
+            git diff --quiet "$BASE_SHA" -- "packages/$origin" && continue
             previous="$RUNNER_TEMP/$origin-APKBUILD"
             git show "$BASE_SHA:$apkbuild" > "$previous" 2>/dev/null || continue
             old=$(apkbuild_field pkgver "$previous")-r$(apkbuild_field pkgrel "$previous")

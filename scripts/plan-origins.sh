@@ -7,7 +7,9 @@ set -eu
 
 changed="$RUNNER_TEMP/changed-files"
 changed_origins() {
-  sed -n 's|^packages/\([^/]*\)/APKBUILD$|\1|p' "$changed" | sort -u
+  # Every file below an origin can change its package family, including
+  # patches, init scripts, and other files referenced by APKBUILD.
+  sed -n 's|^packages/\([^/]*\)/.*$|\1|p' "$changed" | sort -u
 }
 
 if [ "$EVENT" = "workflow_dispatch" ]; then

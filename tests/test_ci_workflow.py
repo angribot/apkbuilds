@@ -37,6 +37,13 @@ class PackageOriginBuildTest(unittest.TestCase):
         self.assertIn("FULL: ${{ inputs.full || 'false' }}", plan)
         self.assertIn("run: sh scripts/plan-origins.sh", plan)
 
+    def test_package_origin_inputs_require_declared_build_increase(self):
+        guard_start = WORKFLOW.index("- name: Require a version increase")
+        guard = WORKFLOW[guard_start : WORKFLOW.index("\n\n  plan:", guard_start)]
+        self.assertIn('git diff --quiet "$BASE_SHA" -- "packages/$origin"', guard)
+        self.assertIn('git show "$BASE_SHA:$apkbuild"', guard)
+        self.assertNotIn('git diff --quiet "$BASE_SHA" -- "$apkbuild"', guard)
+
     def test_check_container_needs_no_bash_for_update_script_tests(self):
         install_step = WORKFLOW[WORKFLOW.index("- name: Install tools") :]
         install_step = install_step[: install_step.index("- uses: actions/checkout")]
