@@ -8,67 +8,19 @@ on:
 permissions:
   contents: write
 
-# Two updaters pushing to main in parallel would race, so serialise them.
+# Keep scheduled and manually dispatched writers from pushing to main together.
 concurrency:
   group: update
 
 jobs:
   update:
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix:
-        include:
-          - package: gnupg
-            updater: scripts/update-gnupg.py
-            apkbuild: packages/gnupg/APKBUILD
-          - package: zerostack
-            updater: scripts/update-zerostack.py
-            apkbuild: packages/zerostack/APKBUILD
-          - package: tirith
-            updater: scripts/update-tirith.py
-            apkbuild: packages/tirith/APKBUILD
-          - package: ports-box
-            updater: scripts/update-ports-box.py
-            apkbuild: packages/ports-box/APKBUILD
-          - package: orbien
-            updater: scripts/update-orbien.py
-            apkbuild: packages/orbien/APKBUILD
-          - package: realm
-            updater: scripts/update-realm.py
-            apkbuild: packages/realm/APKBUILD
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    env:
-      PACKAGE: ${{ matrix.package }}
-      UPDATER: ${{ matrix.updater }}
-      APKBUILD: ${{ matrix.apkbuild }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Check for an eligible upstream release
-        id: update
+        with:
+          fetch-depth: 0
+      - name: Check and commit eligible upstream releases
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          # Each updater verifies upstream signatures or digests itself and
-          # rewrites the APKBUILD in place only when the check passes.
-          version=$(python3 "$UPDATER")
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          if git diff --quiet -- "$APKBUILD"; then
-            echo 'changed=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'changed=true' >> "$GITHUB_OUTPUT"
-          fi
-      - name: Commit the upgrade to main
-        if: steps.update.outputs.changed == 'true'
-        env:
-          VERSION: ${{ steps.update.outputs.version }}
-        run: |
-          # Pushing to main lets CI build, sign, and publish in one run. Any
-          # package build failure stops publication, so the previous APK
-          # repository snapshot remains available from gh-pages.
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add "$APKBUILD"
-          git commit -q -m "$PACKAGE: upgrade to $VERSION"
-          git push origin HEAD:main
+        run: bash scripts/update-packages.sh
