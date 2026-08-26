@@ -24,6 +24,12 @@ all_origins() {
     -exec dirname {} \; | sed 's#^packages/##' | sort -u
 }
 
+# Print package origins named by changed package-input paths.
+#   changed_origins <changed-files-path>
+changed_origins() {
+  sed -n 's|^packages/\([^/]*\)/.*$|\1|p' "$1" | sort -u
+}
+
 # Print a single top-level assignment's value from an APKBUILD, without
 # executing the file. Accepts double-quoted, single-quoted, and bare values,
 # all of which are legal in an APKBUILD, and strips the quotes. Only literal

@@ -15,6 +15,14 @@ MERGER = MERGER_PATH.read_text()
 
 
 class PackageOriginBuildTest(unittest.TestCase):
+    def test_package_markdown_inputs_still_trigger_ci(self):
+        triggers = WORKFLOW[: WORKFLOW.index("permissions:")]
+        self.assertNotIn("paths-ignore:", triggers)
+        self.assertEqual(triggers.count("paths:"), 2)
+        self.assertEqual(triggers.count("- '**'"), 2)
+        self.assertEqual(triggers.count("- '!**.md'"), 2)
+        self.assertEqual(triggers.count("- 'packages/**'"), 2)
+
     def test_manual_dispatch_plans_the_selected_revision(self):
         self.assertIn("revision:", WORKFLOW)
         self.assertIn("base_revision:", WORKFLOW)
@@ -37,11 +45,58 @@ class PackageOriginBuildTest(unittest.TestCase):
         self.assertIn("FULL: ${{ inputs.full || 'false' }}", plan)
         self.assertIn("run: sh scripts/plan-origins.sh", plan)
 
+    def test_package_origin_inputs_require_declared_build_increase(self):
+        guard_start = WORKFLOW.index("- name: Require a version increase")
+        guard = WORKFLOW[guard_start : WORKFLOW.index("\n\n  plan:", guard_start)]
+        self.assertIn("run: sh scripts/check-declared-build.sh", guard)
+        self.assertIn(
+            'git diff --no-renames --name-only "$BASE_SHA" -- packages/',
+            (ROOT / "scripts" / "check-declared-build.sh").read_text(),
+        )
+        self.assertIn(
+            'git show "$BASE_SHA:$apkbuild"',
+            (ROOT / "scripts" / "check-declared-build.sh").read_text(),
+        )
+        self.assertNotIn(
+            'git diff --quiet "$BASE_SHA" -- "$apkbuild"',
+            (ROOT / "scripts" / "check-declared-build.sh").read_text(),
+        )
+
+    def test_plan_runs_in_parallel_with_repository_checks(self):
+        plan_start = WORKFLOW.index("  plan:")
+        build_start = WORKFLOW.index("\n  build:", plan_start)
+        plan = WORKFLOW[plan_start:build_start]
+        build = WORKFLOW[build_start : WORKFLOW.index("\n  sign:", build_start)]
+        self.assertNotIn("needs:", plan)
+        self.assertIn("needs: [check, plan]", build)
+
     def test_check_container_needs_no_bash_for_update_script_tests(self):
         install_step = WORKFLOW[WORKFLOW.index("- name: Install tools") :]
         install_step = install_step[: install_step.index("- uses: actions/checkout")]
         self.assertIn("apk add --no-cache", install_step)
         self.assertNotIn(" bash", install_step)
+
+    def test_ccache_snapshots_use_unique_keys_with_compatible_fallback(self):
+        key_start = WORKFLOW.index("- name: Compute ccache cache keys")
+        restore_start = WORKFLOW.index("- name: Restore ccache", key_start)
+        save_start = WORKFLOW.index("- name: Save ccache", restore_start)
+        stage_start = WORKFLOW.index("- name: Stage", save_start)
+        key_step = WORKFLOW[key_start:restore_start]
+        restore = WORKFLOW[restore_start:save_start]
+        save = WORKFLOW[save_start:stage_start]
+        prefix = (
+            "apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-"
+            "${{ runner.os }}-"
+        )
+        unique_suffix = (
+            "${{ hashFiles(format('packages/{0}/**', matrix.origin)) }}-"
+            "${{ github.run_id }}-${{ github.run_attempt }}"
+        )
+        self.assertIn(f'echo "prefix={prefix}"', key_step)
+        self.assertIn(f'echo "key={prefix}{unique_suffix}"', key_step)
+        self.assertIn("key: ${{ steps.ccache-key.outputs.key }}", restore)
+        self.assertIn("restore-keys: ${{ steps.ccache-key.outputs.prefix }}", restore)
+        self.assertIn("key: ${{ steps.ccache-key.outputs.key }}", save)
 
     def test_build_uses_complete_declared_and_published_families(self):
         self.assertIn("abuild listpkg", WORKFLOW)

@@ -3,9 +3,15 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore: ["**.md"]
+    paths:
+      - '**'
+      - '!**.md'
+      - 'packages/**'
   pull_request:
-    paths-ignore: ["**.md"]
+    paths:
+      - '**'
+      - '!**.md'
+      - 'packages/**'
   workflow_dispatch:
     inputs:
       full:
@@ -85,27 +91,12 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          # Publication skips a complete declared package family, so an edit
-          # that forgets to bump pkgrel would never reach users.
-          . scripts/lib.sh
-          status=0
-          for origin in $(all_origins); do
-            apkbuild="packages/$origin/APKBUILD"
-            git diff --quiet "$BASE_SHA" -- "$apkbuild" && continue
-            previous="$RUNNER_TEMP/$origin-APKBUILD"
-            git show "$BASE_SHA:$apkbuild" > "$previous" 2>/dev/null || continue
-            old=$(apkbuild_field pkgver "$previous")-r$(apkbuild_field pkgrel "$previous")
-            new=$(apkbuild_field pkgver "$apkbuild")-r$(apkbuild_field pkgrel "$apkbuild")
-            if [ "$(apk version -t "$new" "$old")" != '>' ]; then
-              echo "$origin must increase pkgver or pkgrel: $old -> $new" >&2
-              status=1
-            fi
-          done
-          exit "$status"
+        # Publication skips a complete declared package family, so an edit
+        # that forgets to bump pkgrel would never reach users.
+        run: sh scripts/check-declared-build.sh
 
   plan:
-    needs: check
+    # Planning only reads the checkout, so it can overlap repository checks.
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -147,14 +138,20 @@ jobs:
           path: ${{ github.workspace }}/.cache/distfiles
           key: apkbuilds-distfiles-${{ matrix.arch }}-${{ matrix.origin }}-${{ hashFiles(format('packages/{0}/APKBUILD', matrix.origin)) }}
           restore-keys: apkbuilds-distfiles-${{ matrix.arch }}-${{ matrix.origin }}-
-      # ccache uses a stable key without the APKBUILD hash or run id:
-      # the compiler knows which objects are stale, so a single rolling
-      # cache per origin accumulates benefit across version bumps.
+      # Restore the newest compatible snapshot, then save this build under a
+      # unique key. GitHub Actions cache entries are immutable, so the save key
+      # must never reuse the compatibility prefix itself.
+      - name: Compute ccache cache keys
+        id: ccache-key
+        run: |
+          echo "prefix=apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-" >> "$GITHUB_OUTPUT"
+          echo "key=apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-${{ hashFiles(format('packages/{0}/**', matrix.origin)) }}-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
       - name: Restore ccache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.cache/ccache-${{ matrix.origin }}
-          key: apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}
+          key: ${{ steps.ccache-key.outputs.key }}
+          restore-keys: ${{ steps.ccache-key.outputs.prefix }}
       - name: Build packages missing from the published APK repository
         env:
           ARCH: ${{ matrix.arch }}
@@ -276,7 +273,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.cache/ccache-${{ matrix.origin }}
-          key: apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}
+          key: ${{ steps.ccache-key.outputs.key }}
       - name: Stage the built packages
         id: stage
         run: |
