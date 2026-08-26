@@ -2,9 +2,8 @@
 
 CI selects only package origins whose inputs changed since the last push to
 `main`, while full and scheduled runs reconcile all package origins; every
-input below a package origin must advance its declared build to preserve
-published-build
-immutability (ADR-0001). Diff, range, revision, and explicit manual selections
+input below a package origin must advance its declared build to preserve the immutability of
+the published build (ADR-0001). Diff, range, revision, and explicit manual selections
 must resolve to valid package origins before matrix expansion, validation and
 planning share one checkout and job, and compiler-cache snapshots remain scoped
 and immutable per architecture, package origin, runner, and toolchain. Scheduled
