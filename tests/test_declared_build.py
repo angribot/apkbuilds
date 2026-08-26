@@ -18,13 +18,15 @@ class DeclaredBuildGuardTest(unittest.TestCase):
         self.root = pathlib.Path(directory.name)
         (self.root / "scripts").mkdir()
         (self.root / "packages" / "alpha").mkdir(parents=True)
+        (self.root / "packages" / "beta").mkdir()
         (self.root / "runner-temp").mkdir()
         (self.root / "bin").mkdir()
         (self.root / "scripts" / "check-declared-build.sh").write_bytes(
             CHECK.read_bytes()
         )
         (self.root / "scripts" / "lib.sh").write_bytes(LIB.read_bytes())
-        self.write_apkbuild("0")
+        self.write_apkbuild("alpha", "0")
+        self.write_apkbuild("beta", "0")
         (self.root / "packages" / "alpha" / "fix.patch").write_text(
             "initial packaging input\n"
         )
@@ -55,9 +57,9 @@ class DeclaredBuildGuardTest(unittest.TestCase):
             text=True,
         )
 
-    def write_apkbuild(self, pkgrel):
-        (self.root / "packages" / "alpha" / "APKBUILD").write_text(
-            f"pkgname=alpha\npkgver=1.0.0\npkgrel={pkgrel}\n"
+    def write_apkbuild(self, origin, pkgrel):
+        (self.root / "packages" / origin / "APKBUILD").write_text(
+            f"pkgname={origin}\npkgver=1.0.0\npkgrel={pkgrel}\n"
         )
 
     def run_guard(self):
@@ -92,7 +94,7 @@ class DeclaredBuildGuardTest(unittest.TestCase):
         (self.root / "packages" / "alpha" / "fix.patch").write_text(
             "changed packaging input\n"
         )
-        self.write_apkbuild("1")
+        self.write_apkbuild("alpha", "1")
 
         completed = self.run_guard()
 
@@ -105,6 +107,18 @@ class DeclaredBuildGuardTest(unittest.TestCase):
 
         self.assertNotEqual(completed.returncode, 0)
         self.assertIn("alpha changed package inputs but has no APKBUILD", completed.stderr)
+
+    def test_renamed_package_input_checks_the_source_origin(self):
+        self.git(
+            "mv",
+            "packages/alpha/fix.patch",
+            "packages/beta/fix.patch",
+        )
+
+        completed = self.run_guard()
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("alpha must increase pkgver or pkgrel", completed.stderr)
 
 
 if __name__ == "__main__":

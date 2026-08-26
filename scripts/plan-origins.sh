@@ -30,7 +30,7 @@ if [ "$EVENT" = "schedule" ] || [ "$FULL" = "true" ] || {
   # published snapshot may lag behind more than the current parent commit.
   origins=$(all_origins)
 elif [ "$EVENT" = "pull_request" ]; then
-  git diff --name-only "$BASE" -- packages/ > "$changed"
+  git diff --no-renames --name-only "$BASE" -- packages/ > "$changed"
   origins=$(changed_origins "$changed")
 elif [ "$EVENT" = "workflow_dispatch" ]; then
   if [ -n "$BASE_REVISION" ]; then
@@ -49,10 +49,10 @@ elif [ "$EVENT" = "workflow_dispatch" ]; then
       "$base_commit" "$target_commit" >&2
     exit 1
   fi
-  git diff --name-only "$base_commit" "$target_commit" -- packages/ > "$changed"
+  git diff --no-renames --name-only "$base_commit" "$target_commit" -- packages/ > "$changed"
   origins=$(changed_origins "$changed")
 else
-  git diff --name-only "$BEFORE" "$REVISION" -- packages/ > "$changed"
+  git diff --no-renames --name-only "$BEFORE" "$REVISION" -- packages/ > "$changed"
   origins=$(changed_origins "$changed")
 fi
 

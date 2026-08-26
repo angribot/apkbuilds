@@ -5,7 +5,7 @@
 set -eu
 . scripts/lib.sh
 
-git diff --name-only "$BASE_SHA" -- packages/ > "$RUNNER_TEMP/changed-files"
+git diff --no-renames --name-only "$BASE_SHA" -- packages/ > "$RUNNER_TEMP/changed-files"
 status=0
 for origin in $(changed_origins "$RUNNER_TEMP/changed-files"); do
   apkbuild="packages/$origin/APKBUILD"

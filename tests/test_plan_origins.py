@@ -58,6 +58,14 @@ class PlanOriginsTest(unittest.TestCase):
         )
         self.commit("change alpha patch", "packages/alpha/fix.patch")
         self.auxiliary_commit = self.git(self.root, "rev-parse", "HEAD").stdout.strip()
+        self.git(
+            self.root,
+            "mv",
+            "packages/alpha/fix.patch",
+            "packages/beta/fix.patch",
+        )
+        self.git(self.root, "commit", "-q", "-m", "rename alpha patch")
+        self.rename_commit = self.git(self.root, "rev-parse", "HEAD").stdout.strip()
 
     def write_apkbuild(self, origin, version):
         (self.root / "packages" / origin / "APKBUILD").write_text(
@@ -130,7 +138,34 @@ class PlanOriginsTest(unittest.TestCase):
 
         outputs = self.plan_outputs(completed)
         matrix = json.loads(outputs["matrix"])
-        self.assertEqual({item["origin"] for item in matrix["include"]}, {"alpha"})
+        self.assertEqual(
+            {
+                (item["origin"], item["arch"])
+                for item in matrix["include"]
+            },
+            {("alpha", "x86_64"), ("alpha", "aarch64")},
+        )
+
+    def test_renamed_package_input_selects_both_origins(self):
+        completed = self.run_plan(
+            revision=self.rename_commit,
+            base_revision=self.auxiliary_commit,
+        )
+
+        outputs = self.plan_outputs(completed)
+        matrix = json.loads(outputs["matrix"])
+        self.assertEqual(
+            {
+                (item["origin"], item["arch"])
+                for item in matrix["include"]
+            },
+            {
+                ("alpha", "x86_64"),
+                ("alpha", "aarch64"),
+                ("beta", "x86_64"),
+                ("beta", "aarch64"),
+            },
+        )
 
     def test_manual_dispatch_without_selection_reconciles_every_origin(self):
         completed = self.run_plan(

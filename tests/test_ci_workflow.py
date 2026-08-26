@@ -50,7 +50,7 @@ class PackageOriginBuildTest(unittest.TestCase):
         guard = WORKFLOW[guard_start : WORKFLOW.index("\n\n  plan:", guard_start)]
         self.assertIn("run: sh scripts/check-declared-build.sh", guard)
         self.assertIn(
-            'git diff --name-only "$BASE_SHA" -- packages/',
+            'git diff --no-renames --name-only "$BASE_SHA" -- packages/',
             (ROOT / "scripts" / "check-declared-build.sh").read_text(),
         )
         self.assertIn(
