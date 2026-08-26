@@ -23,6 +23,10 @@ class PackageOriginBuildTest(unittest.TestCase):
         self.assertIn("REVISION: ${{ inputs.revision || github.sha }}", plan)
         self.assertIn("BASE_REVISION: ${{ inputs.base_revision }}", plan)
         self.assertIn(
+            "EXPLICIT_REVISION: ${{ inputs.revision != '' && 'true' || 'false' }}",
+            plan,
+        )
+        self.assertIn(
             "MAIN_REVISION: origin/${{ github.event.repository.default_branch }}",
             plan,
         )

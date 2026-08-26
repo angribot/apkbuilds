@@ -125,6 +125,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
           REVISION: ${{ inputs.revision || github.sha }}
           BASE_REVISION: ${{ inputs.base_revision }}
+          EXPLICIT_REVISION: ${{ inputs.revision != '' && 'true' || 'false' }}
           MAIN_REVISION: origin/${{ github.event.repository.default_branch }}
         run: sh scripts/plan-origins.sh
 
