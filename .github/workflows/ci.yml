@@ -12,6 +12,14 @@ on:
         description: 'Build all package origins regardless of changes'
         type: boolean
         default: false
+      revision:
+        description: 'Main commit to publish incrementally'
+        type: string
+        default: ''
+      base_revision:
+        description: 'Base main commit for incremental planning'
+        type: string
+        default: ''
   schedule:
     - cron: '0 0 * * 0'
 
@@ -40,6 +48,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          ref: ${{ inputs.revision || github.sha }}
       - name: Trust the workspace
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Create the builder user
@@ -106,6 +115,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          ref: ${{ inputs.revision || github.sha }}
       - name: Compute changed origins
         id: set-matrix
         env:
@@ -113,35 +123,10 @@ jobs:
           FULL: ${{ inputs.full || 'false' }}
           BASE: ${{ github.event.pull_request.base.sha }}
           BEFORE: ${{ github.event.before }}
-        run: |
-          . scripts/lib.sh
-          if [ "$EVENT" = "schedule" ] || [ "$FULL" = "true" ]; then
-            origins=$(all_origins)
-          elif [ "$EVENT" = "pull_request" ]; then
-            origins=$(git diff --name-only "$BASE" -- packages/ | \
-              sed -n 's|^packages/\([^/]*\)/APKBUILD$|\1|p' | sort -u)
-          else
-            origins=$(git diff --name-only "$BEFORE" -- packages/ | \
-              sed -n 's|^packages/\([^/]*\)/APKBUILD$|\1|p' | sort -u)
-          fi
-          items=""
-          for origin in $origins; do
-            for arch in x86_64 aarch64; do
-              runner=ubuntu-24.04
-              [ "$arch" = aarch64 ] && runner=ubuntu-24.04-arm
-              if supports_arch "$arch" "packages/$origin/APKBUILD"; then
-                [ -n "$items" ] && items="$items,"
-                items="$items{\"arch\":\"$arch\",\"origin\":\"$origin\",\"runner\":\"$runner\"}"
-              fi
-            done
-          done
-          if [ -z "$items" ]; then
-            echo "has_origins=false" >> "$GITHUB_OUTPUT"
-            echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
-          else
-            echo "has_origins=true" >> "$GITHUB_OUTPUT"
-            echo "matrix={\"include\":[$items]}" >> "$GITHUB_OUTPUT"
-          fi
+          REVISION: ${{ inputs.revision || github.sha }}
+          BASE_REVISION: ${{ inputs.base_revision }}
+          MAIN_REVISION: origin/${{ github.event.repository.default_branch }}
+        run: sh scripts/plan-origins.sh
 
   build:
     needs: [check, plan]
@@ -153,6 +138,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.revision || github.sha }}
       - name: Restore source distfiles
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -320,6 +307,8 @@ jobs:
     environment: release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.revision || github.sha }}
       - name: Check out the published APK repository
         run: |
           git clone --depth 1 --branch gh-pages \
@@ -463,6 +452,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.revision || github.sha }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: signed-repository

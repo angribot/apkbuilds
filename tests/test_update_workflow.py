@@ -24,6 +24,7 @@ class PackageUpdateTest(unittest.TestCase):
     def test_workflow_uses_one_fixed_order_writer(self):
         self.assertIn("sh scripts/update-packages.sh", WORKFLOW)
         self.assertIn("fetch-depth: 0", WORKFLOW)
+        self.assertIn("ref: ${{ github.event.repository.default_branch }}", WORKFLOW)
         self.assertNotIn("strategy:", WORKFLOW)
         self.assertNotIn("matrix:", WORKFLOW)
 
@@ -33,6 +34,20 @@ class PackageUpdateTest(unittest.TestCase):
             position = UPDATER.index(entry)
             positions.append(position)
         self.assertEqual(positions, sorted(positions))
+
+    def test_workflow_dispatches_one_publication_for_successful_updates(self):
+        self.assertIn("GH_TOKEN: ${{ github.token }}", WORKFLOW)
+        self.assertIn("GITHUB_TOKEN: ${{ github.token }}", WORKFLOW)
+        self.assertIn("contents: write", WORKFLOW)
+        self.assertIn("actions: write", WORKFLOW)
+        self.assertIn("has_updates=1", UPDATER)
+        self.assertIn("final_commit=$(git rev-parse origin/main)", UPDATER)
+        self.assertIn("gh workflow run ci.yml --ref main", UPDATER)
+        self.assertIn(
+            '-f base_revision="$initial_commit" -f revision="$final_commit"',
+            UPDATER,
+        )
+        self.assertIn("could not dispatch CI publication", UPDATER)
 
     def test_workflow_stages_each_apkbuild_and_never_force_pushes(self):
         self.assertIn('git diff --quiet -- "$_pu_apkbuild"', UPDATER)

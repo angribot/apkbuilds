@@ -7,6 +7,9 @@ set -u
 PUSH_ATTEMPTS=3
 failures=0
 fatal_failure=0
+has_updates=0
+initial_commit=
+final_commit=
 
 # Drop the current package origin commit after a failed push. Successful
 # earlier package origins are already on origin/main, while the current one must
@@ -98,11 +101,20 @@ process_update() {
     fi
     return 1
   fi
+  has_updates=1
+  if ! final_commit=$(git rev-parse origin/main); then
+    echo "::error::could not determine $_pu_package_origin update commit" >&2
+    return 2
+  fi
   return 0
 }
 
 git config user.name 'github-actions[bot]'
 git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+if ! initial_commit=$(git rev-parse HEAD); then
+  echo "::error::could not determine the starting main commit" >&2
+  exit 1
+fi
 
 # Keep this list in the order in which package origins are processed. Each
 # entry is package origin|updater|APKBUILD and is deliberately independent.
@@ -126,6 +138,20 @@ ports-box|scripts/update-ports-box.py|packages/ports-box/APKBUILD
 orbien|scripts/update-orbien.py|packages/orbien/APKBUILD
 realm|scripts/update-realm.py|packages/realm/APKBUILD
 UPDATES
+
+# A GITHUB_TOKEN push does not trigger another workflow. Dispatch one
+# publication run after every package origin has had its chance to update, and
+# pass the exact final revision while keeping main as the workflow ref.
+if [ "$has_updates" -eq 1 ]; then
+  if [ -z "$final_commit" ]; then
+    echo "::error::could not dispatch CI publication without a main commit" >&2
+    failures=1
+  elif ! gh workflow run ci.yml --ref main \
+      -f base_revision="$initial_commit" -f revision="$final_commit" -f full=false; then
+    echo "::error::could not dispatch CI publication for $final_commit" >&2
+    failures=1
+  fi
+fi
 
 if [ "$fatal_failure" -eq 1 ]; then
   exit 1

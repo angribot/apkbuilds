@@ -80,6 +80,25 @@ if package_origin in updated:
         self.git(root, "push", "-q", "origin", "main")
         return root, remote
 
+    def install_fake_gh(self, root):
+        fake_bin = root / "fake-bin"
+        fake_bin.mkdir(exist_ok=True)
+        invocations = root / "gh-invocations"
+        gh = fake_bin / "gh"
+        gh.write_text(
+            """#!/bin/sh
+printf '%s\\n' "$*" >> "$GH_INVOCATIONS"
+if [ "${GH_EXIT:-0}" -ne 0 ]; then
+    exit "$GH_EXIT"
+fi
+"""
+        )
+        gh.chmod(gh.stat().st_mode | stat.S_IXUSR)
+        return {
+            "PATH": os.pathsep.join([str(fake_bin), os.environ["PATH"]]),
+            "GH_INVOCATIONS": str(invocations),
+        }
+
     def run_updater(self, root, env=None):
         merged_env = os.environ.copy()
         if env:
@@ -97,22 +116,24 @@ if package_origin in updated:
 
     def test_no_eligible_updates_create_no_commit(self):
         root, _ = self.create_checkout()
+        env = self.install_fake_gh(root)
 
-        completed = self.run_updater(root)
+        completed = self.run_updater(root, env)
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(
             self.git(root, "log", "origin/main", "--format=%s").stdout.splitlines(),
             ["initial"],
         )
+        self.assertFalse((root / "gh-invocations").exists())
 
     def test_failed_package_origin_does_not_block_or_leak_into_later_origins(self):
         root, _ = self.create_checkout()
+        initial_commit = self.git(root, "rev-parse", "HEAD").stdout.strip()
+        env = self.install_fake_gh(root)
+        env.update({"UPDATED_ORIGINS": "zerostack,realm", "FAIL_UPDATERS": "gnupg"})
 
-        completed = self.run_updater(
-            root,
-            {"UPDATED_ORIGINS": "zerostack,realm", "FAIL_UPDATERS": "gnupg"},
-        )
+        completed = self.run_updater(root, env)
 
         self.assertEqual(completed.returncode, 1, completed.stderr)
         self.assertEqual(
@@ -127,6 +148,34 @@ if package_origin in updated:
         self.assertEqual(
             self.git(root, "status", "--short", "--untracked-files=no").stdout,
             "",
+        )
+        final_commit = self.git(root, "rev-parse", "origin/main").stdout.strip()
+        self.assertEqual(
+            (root / "gh-invocations").read_text().splitlines(),
+            [
+                "workflow run ci.yml --ref main "
+                f"-f base_revision={initial_commit} "
+                f"-f revision={final_commit} -f full=false"
+            ],
+        )
+
+    def test_successful_updates_dispatch_once_for_final_revision(self):
+        root, _ = self.create_checkout()
+        initial_commit = self.git(root, "rev-parse", "HEAD").stdout.strip()
+        env = self.install_fake_gh(root)
+        env["UPDATED_ORIGINS"] = "gnupg,realm"
+
+        completed = self.run_updater(root, env)
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        invocations = (root / "gh-invocations").read_text().splitlines()
+        self.assertEqual(len(invocations), 1)
+        final_commit = self.git(root, "rev-parse", "origin/main").stdout.strip()
+        self.assertEqual(
+            invocations[0],
+            "workflow run ci.yml --ref main "
+            f"-f base_revision={initial_commit} "
+            f"-f revision={final_commit} -f full=false",
         )
 
     def test_exhausted_push_retries_abandon_only_current_package_origin(self):
@@ -177,8 +226,21 @@ exec "$REAL_GIT" "$@"
         self.assertIn("pkgver=2.0.0", self.remote_file(root, "packages/realm/APKBUILD"))
         self.assertIn("gnupg push failed after 3 attempts", completed.stderr)
 
+    def test_dispatch_failure_is_visible_after_a_successful_update(self):
+        root, _ = self.create_checkout()
+        env = self.install_fake_gh(root)
+        env.update({"UPDATED_ORIGINS": "gnupg", "GH_EXIT": "1"})
+
+        completed = self.run_updater(root, env)
+
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("could not dispatch CI publication", completed.stderr)
+        self.assertEqual(len((root / "gh-invocations").read_text().splitlines()), 1)
+        self.assertIn("pkgver=2.0.0", self.remote_file(root, "packages/gnupg/APKBUILD"))
+
     def test_stale_main_is_rebased_and_pushed_without_force(self):
         root, remote = self.create_checkout()
+        gh_env = self.install_fake_gh(root)
         race_clone = root / "race"
         self.git(root, "clone", "-q", "-b", "main", str(remote), str(race_clone))
         self.git(race_clone, "config", "user.name", "racer")
@@ -189,7 +251,7 @@ exec "$REAL_GIT" "$@"
         self.git(race_clone, "commit", "-q", "-m", "concurrent change")
 
         fake_bin = root / "fake-bin"
-        fake_bin.mkdir()
+        fake_bin.mkdir(exist_ok=True)
         marker = root / "race.marker"
         real_git = shutil.which("git")
         wrapper = fake_bin / "git"
@@ -208,6 +270,7 @@ exec "$REAL_GIT" "$@"
         completed = self.run_updater(
             root,
             {
+                **gh_env,
                 "UPDATED_ORIGINS": "gnupg",
                 "PATH": path,
                 "REAL_GIT": real_git,
