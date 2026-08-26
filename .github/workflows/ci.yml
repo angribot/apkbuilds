@@ -12,6 +12,10 @@ on:
         description: 'Build all package origins regardless of changes'
         type: boolean
         default: false
+      revision:
+        description: 'Main commit to publish incrementally'
+        type: string
+        default: ''
   schedule:
     - cron: '0 0 * * 0'
 
@@ -40,6 +44,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          ref: ${{ inputs.revision || github.ref }}
       - name: Trust the workspace
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Create the builder user
@@ -106,6 +111,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          ref: ${{ inputs.revision || github.ref }}
       - name: Compute changed origins
         id: set-matrix
         env:
@@ -113,15 +119,23 @@ jobs:
           FULL: ${{ inputs.full || 'false' }}
           BASE: ${{ github.event.pull_request.base.sha }}
           BEFORE: ${{ github.event.before }}
+          REVISION: ${{ inputs.revision || github.sha }}
         run: |
+          set -eu -o pipefail
           . scripts/lib.sh
           if [ "$EVENT" = "schedule" ] || [ "$FULL" = "true" ]; then
             origins=$(all_origins)
           elif [ "$EVENT" = "pull_request" ]; then
             origins=$(git diff --name-only "$BASE" -- packages/ | \
               sed -n 's|^packages/\([^/]*\)/APKBUILD$|\1|p' | sort -u)
+          elif [ "$EVENT" = "workflow_dispatch" ]; then
+            parent=$(git rev-parse "$REVISION^")
+            changed="$RUNNER_TEMP/changed-files"
+            git diff --name-only "$parent" "$REVISION" -- packages/ > "$changed"
+            origins=$(sed -n 's|^packages/\([^/]*\)/APKBUILD$|\1|p' \
+              "$changed" | sort -u)
           else
-            origins=$(git diff --name-only "$BEFORE" -- packages/ | \
+            origins=$(git diff --name-only "$BEFORE" "$REVISION" -- packages/ | \
               sed -n 's|^packages/\([^/]*\)/APKBUILD$|\1|p' | sort -u)
           fi
           items=""
@@ -153,6 +167,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.revision || github.ref }}
       - name: Restore source distfiles
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -320,6 +336,8 @@ jobs:
     environment: release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.revision || github.ref }}
       - name: Check out the published APK repository
         run: |
           git clone --depth 1 --branch gh-pages \
@@ -463,6 +481,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.revision || github.ref }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: signed-repository
