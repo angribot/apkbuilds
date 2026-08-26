@@ -8,18 +8,10 @@ import subprocess
 import tempfile
 import unittest
 
+from tests.update_manifest import read_manifest
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "update-packages.sh"
-MANIFEST = ROOT / "packages" / "updaters"
-
-
-def read_manifest():
-    return tuple(
-        tuple(line.split("|"))
-        for line in MANIFEST.read_text().splitlines()
-        if line and not line.startswith("#")
-    )
-
 
 PACKAGE_ORIGINS = read_manifest()
 UPDATER_ORIGINS = tuple(
@@ -304,7 +296,14 @@ exec "$REAL_GIT" "$@"
     def test_dispatch_failure_is_visible_after_a_successful_update(self):
         root, _ = self.create_checkout()
         env = self.install_fake_gh(root)
-        env.update({"UPDATED_ORIGINS": "gnupg", "GH_EXIT": "1"})
+        output = root / "github-output"
+        env.update(
+            {
+                "UPDATED_ORIGINS": "gnupg",
+                "GH_EXIT": "1",
+                "GITHUB_OUTPUT": str(output),
+            }
+        )
 
         completed = self.run_updater(root, env)
 
@@ -312,6 +311,7 @@ exec "$REAL_GIT" "$@"
         self.assertIn("could not dispatch CI publication", completed.stderr)
         self.assertIn("3 attempts", completed.stderr)
         self.assertEqual(len((root / "gh-invocations").read_text().splitlines()), 3)
+        self.assertEqual(output.read_text().strip(), "publication_dispatch_failed=true")
         self.assertIn("pkgver=2.0.0", self.remote_file(root, "packages/gnupg/APKBUILD"))
 
     def test_stale_main_is_rebased_and_pushed_without_force(self):

@@ -1,29 +1,19 @@
 # Protect main and gh-pages write paths
 
-Protect the source repository's `main` branch with pull requests and the
-stable `CI / gate` status check. Require administrators to follow the same
-rules, reject force-pushes and deletions, and keep the required checks strict
-so a branch is tested against the current `main` tip.
+GitHub rulesets protect the source repository's `main` branch with pull
+requests, one approval, and the stable `CI / gate` status check, while both
+protected branches reject deletion and non-fast-forward updates. The trusted
+`Update packages` workflow bypasses `main` protection with `UPDATE_DEPLOY_KEY`,
+and `CI / publish` bypasses `gh-pages` protection with `PAGES_DEPLOY_KEY`; the
+private keys are exposed only to their respective jobs. Because GitHub exposes
+deploy-key bypasses by actor type rather than deploy-key ID, the repository
+keeps exactly these two write deploy keys and does not add another without
+reviewing both rulesets.
 
-The package updater is the one deliberate `main` exception. It runs in the
-trusted `Update packages` workflow and uses the `UPDATE_DEPLOY_KEY` deploy key
-to bypass pull-request and status-check rules for each independently validated
-package-origin commit. The publication job separately uses
-`PAGES_DEPLOY_KEY` for its required orphan-snapshot force-push on `gh-pages`.
-The private keys are exposed only to their respective jobs; the updater still
-needs `actions: write` to dispatch CI, while publication uses no repository
-`GITHUB_TOKEN` write permission.
+## Consequences
 
-GitHub repository rulesets expose deploy-key bypass as the `DeployKey` actor
-type rather than allowing a particular deploy-key ID. This personal repository
-therefore keeps exactly these two write deploy keys and scopes their private
-secrets to the intended workflows. This is the strongest server-side exception
-available without registering separate GitHub Apps; do not add another write
-deploy key without reviewing both rulesets. The force-push itself remains
-required by ADR-0003.
-
-The protection configuration is repository settings rather than source-tree
-state. Keep the following settings synchronized with this decision:
+Branch protection is repository settings rather than source-tree state, so
+keep these settings synchronized with this decision:
 
 - `main`: the active `Protect main write path` ruleset requires a pull request,
   one approval, strict `CI / gate`, no force-push, and no deletion. Its
@@ -31,3 +21,11 @@ state. Keep the following settings synchronized with this decision:
 - `gh-pages`: the active `Protect gh-pages write path` ruleset requires a pull
   request, one approval, no force-push, and no deletion. Its `DeployKey` bypass
   is used by `PAGES_DEPLOY_KEY` from `CI / publish`.
+
+The read-only `Verify branch protection` workflow runs weekly and on demand.
+It uses `scripts/verify-branch-rulesets.sh` to check that both named rulesets
+are active, target the intended branch, require the expected pull request and
+status-check rules, reject deletion and non-fast-forward updates, and retain
+only the documented deploy-key bypass. A failed check makes settings drift
+visible without granting the workflow permission to change repository rules.
+The force-push on `gh-pages` remains required by ADR-0003.

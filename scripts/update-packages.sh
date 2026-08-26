@@ -138,6 +138,12 @@ push_commit() {
   return 1
 }
 
+mark_publication_dispatch_failure() {
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    echo 'publication_dispatch_failed=true' >> "$GITHUB_OUTPUT"
+  fi
+}
+
 dispatch_publication() {
   _dp_initial_commit="$1"
   _dp_final_commit="$2"
@@ -249,6 +255,7 @@ if [ "$has_updates" -eq 1 ]; then
     failures=1
   elif ! dispatch_publication "$initial_commit" "$final_commit"; then
     echo "::error::could not dispatch CI publication for $final_commit after $DISPATCH_ATTEMPTS attempts" >&2
+    mark_publication_dispatch_failure
     failures=1
   fi
 fi

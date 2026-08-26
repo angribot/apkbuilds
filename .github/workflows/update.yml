@@ -26,7 +26,22 @@ jobs:
           # main's pull-request protection; GITHUB_TOKEN cannot bypass it.
           ssh-key: ${{ secrets.UPDATE_DEPLOY_KEY }}
       - name: Check and commit eligible upstream releases
+        id: update
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
         run: sh scripts/update-packages.sh packages/updaters
+      - name: Recover a failed publication dispatch
+        if: failure() && steps.update.outputs.publication_dispatch_failed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in 1 2 3; do
+            if gh workflow run ci.yml --ref main -f full=false; then
+              exit 0
+            fi
+            echo "CI reconciliation dispatch attempt $attempt failed" >&2
+            [ "$attempt" -eq 3 ] || sleep $((attempt * 5))
+          done
+          echo '::error::CI reconciliation dispatch failed after 3 attempts' >&2
+          exit 1

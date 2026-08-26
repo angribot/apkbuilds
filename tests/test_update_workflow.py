@@ -5,19 +5,12 @@ import shutil
 import subprocess
 import unittest
 
+from tests.update_manifest import read_manifest
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKFLOW = (ROOT / ".github" / "workflows" / "update.yml").read_text()
 UPDATER_PATH = ROOT / "scripts" / "update-packages.sh"
 UPDATER = UPDATER_PATH.read_text()
-MANIFEST_PATH = ROOT / "packages" / "updaters"
-
-
-def read_manifest():
-    entries = []
-    for line in MANIFEST_PATH.read_text().splitlines():
-        if line and not line.startswith("#"):
-            entries.append(tuple(line.split("|")))
-    return entries
 
 
 class PackageUpdateTest(unittest.TestCase):
@@ -74,6 +67,15 @@ class PackageUpdateTest(unittest.TestCase):
         self.assertIn("DISPATCH_ATTEMPTS=3", UPDATER)
         self.assertIn('while [ "$_dp_attempt" -le "$DISPATCH_ATTEMPTS" ]', UPDATER)
         self.assertIn("could not dispatch CI publication", UPDATER)
+        self.assertIn("publication_dispatch_failed=true", UPDATER)
+        self.assertIn("id: update", WORKFLOW)
+        self.assertIn(
+            "if: failure() && steps.update.outputs.publication_dispatch_failed == 'true'",
+            WORKFLOW,
+        )
+        self.assertIn("for attempt in 1 2 3", WORKFLOW)
+        self.assertIn("gh workflow run ci.yml --ref main -f full=false", WORKFLOW)
+        self.assertIn("reconciliation dispatch attempt", WORKFLOW)
 
     def test_workflow_stages_each_apkbuild_and_never_force_pushes(self):
         self.assertIn('git diff --quiet -- "$_pu_apkbuild"', UPDATER)
