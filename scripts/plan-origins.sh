@@ -6,12 +6,6 @@ set -eu
 . scripts/lib.sh
 
 changed="$RUNNER_TEMP/changed-files"
-changed_origins() {
-  # Every file below an origin can change its package family, including
-  # patches, init scripts, and other files referenced by APKBUILD.
-  sed -n 's|^packages/\([^/]*\)/.*$|\1|p' "$changed" | sort -u
-}
-
 if [ "$EVENT" = "workflow_dispatch" ]; then
   if ! target_commit=$(git rev-parse "$REVISION^{commit}"); then
     printf '::error::invalid selected revision %s\n' "$REVISION" >&2
@@ -37,7 +31,7 @@ if [ "$EVENT" = "schedule" ] || [ "$FULL" = "true" ] || {
   origins=$(all_origins)
 elif [ "$EVENT" = "pull_request" ]; then
   git diff --name-only "$BASE" -- packages/ > "$changed"
-  origins=$(changed_origins)
+  origins=$(changed_origins "$changed")
 elif [ "$EVENT" = "workflow_dispatch" ]; then
   if [ -n "$BASE_REVISION" ]; then
     if ! base_commit=$(git rev-parse "$BASE_REVISION^{commit}"); then
@@ -56,10 +50,10 @@ elif [ "$EVENT" = "workflow_dispatch" ]; then
     exit 1
   fi
   git diff --name-only "$base_commit" "$target_commit" -- packages/ > "$changed"
-  origins=$(changed_origins)
+  origins=$(changed_origins "$changed")
 else
   git diff --name-only "$BEFORE" "$REVISION" -- packages/ > "$changed"
-  origins=$(changed_origins)
+  origins=$(changed_origins "$changed")
 fi
 
 items=

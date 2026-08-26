@@ -40,18 +40,18 @@ class PackageOriginBuildTest(unittest.TestCase):
     def test_package_origin_inputs_require_declared_build_increase(self):
         guard_start = WORKFLOW.index("- name: Require a version increase")
         guard = WORKFLOW[guard_start : WORKFLOW.index("\n\n  plan:", guard_start)]
-        self.assertIn("run: sh scripts/check-package-versions.sh", guard)
+        self.assertIn("run: sh scripts/check-declared-build.sh", guard)
         self.assertIn(
-            'git diff --quiet "$BASE_SHA" -- "packages/$origin"',
-            (ROOT / "scripts" / "check-package-versions.sh").read_text(),
+            'git diff --name-only "$BASE_SHA" -- packages/',
+            (ROOT / "scripts" / "check-declared-build.sh").read_text(),
         )
         self.assertIn(
             'git show "$BASE_SHA:$apkbuild"',
-            (ROOT / "scripts" / "check-package-versions.sh").read_text(),
+            (ROOT / "scripts" / "check-declared-build.sh").read_text(),
         )
         self.assertNotIn(
             'git diff --quiet "$BASE_SHA" -- "$apkbuild"',
-            (ROOT / "scripts" / "check-package-versions.sh").read_text(),
+            (ROOT / "scripts" / "check-declared-build.sh").read_text(),
         )
 
     def test_plan_runs_in_parallel_with_repository_checks(self):

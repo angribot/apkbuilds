@@ -63,6 +63,21 @@ class ApkbuildFieldTest(unittest.TestCase):
         self.assertIn("touch", out)
 
 
+class ChangedOriginsTest(unittest.TestCase):
+    def test_lists_origins_for_all_package_input_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            changed = pathlib.Path(directory) / "changed"
+            changed.write_text(
+                "packages/alpha/APKBUILD\n"
+                "packages/alpha/fix.patch\n"
+                "packages/beta/service.initd\n"
+                "README.md\n"
+            )
+            status, out = run_helper(f'changed_origins "{changed}"')
+        self.assertEqual(status, 0)
+        self.assertEqual(out.splitlines(), ["alpha", "beta"])
+
+
 class OriginDirectoryTest(unittest.TestCase):
     def test_accepts_directory_named_for_package_origin(self):
         with tempfile.TemporaryDirectory() as directory:

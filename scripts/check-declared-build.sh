@@ -5,12 +5,19 @@
 set -eu
 . scripts/lib.sh
 
+git diff --name-only "$BASE_SHA" -- packages/ > "$RUNNER_TEMP/changed-files"
 status=0
-for origin in $(all_origins); do
+for origin in $(changed_origins "$RUNNER_TEMP/changed-files"); do
   apkbuild="packages/$origin/APKBUILD"
-  git diff --quiet "$BASE_SHA" -- "packages/$origin" && continue
+  if [ ! -f "$apkbuild" ]; then
+    echo "$origin changed package inputs but has no APKBUILD" >&2
+    status=1
+    continue
+  fi
   previous="$RUNNER_TEMP/$origin-APKBUILD"
-  git show "$BASE_SHA:$apkbuild" > "$previous" 2>/dev/null || continue
+  if ! git show "$BASE_SHA:$apkbuild" > "$previous" 2>/dev/null; then
+    continue
+  fi
   old=$(apkbuild_field pkgver "$previous")-r$(apkbuild_field pkgrel "$previous")
   new=$(apkbuild_field pkgver "$apkbuild")-r$(apkbuild_field pkgrel "$apkbuild")
   if [ "$(apk version -t "$new" "$old")" != '>' ]; then

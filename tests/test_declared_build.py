@@ -7,11 +7,11 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-CHECK = ROOT / "scripts" / "check-package-versions.sh"
+CHECK = ROOT / "scripts" / "check-declared-build.sh"
 LIB = ROOT / "scripts" / "lib.sh"
 
 
-class PackageVersionGuardTest(unittest.TestCase):
+class DeclaredBuildGuardTest(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -20,7 +20,7 @@ class PackageVersionGuardTest(unittest.TestCase):
         (self.root / "packages" / "alpha").mkdir(parents=True)
         (self.root / "runner-temp").mkdir()
         (self.root / "bin").mkdir()
-        (self.root / "scripts" / "check-package-versions.sh").write_bytes(
+        (self.root / "scripts" / "check-declared-build.sh").write_bytes(
             CHECK.read_bytes()
         )
         (self.root / "scripts" / "lib.sh").write_bytes(LIB.read_bytes())
@@ -70,7 +70,7 @@ class PackageVersionGuardTest(unittest.TestCase):
             }
         )
         return subprocess.run(
-            ["sh", "scripts/check-package-versions.sh"],
+            ["sh", "scripts/check-declared-build.sh"],
             cwd=self.root,
             env=env,
             capture_output=True,
@@ -97,6 +97,14 @@ class PackageVersionGuardTest(unittest.TestCase):
         completed = self.run_guard()
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_deleted_package_origin_fails_with_actionable_error(self):
+        self.git("rm", "-q", "-r", "packages/alpha")
+
+        completed = self.run_guard()
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("alpha changed package inputs but has no APKBUILD", completed.stderr)
 
 
 if __name__ == "__main__":
