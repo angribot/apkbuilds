@@ -1,5 +1,5 @@
 pkgname=tirith
-pkgver=0.3.3
+pkgver=0.4.0
 pkgrel=0
 pkgdesc="Terminal security for developers and AI agents"
 url="https://github.com/sheeki03/tirith"
@@ -68,6 +68,6 @@ package() {
 }
 
 sha512sums="
-7da57260d6247bce9d39bbcd7a99a22e106f825ac71c2931cb5ae6232952ce8a01b362624162e5e2aa2474b36367f2bd17a0a989116168750cc47cfa12d2e89b  tirith-0.3.3.tar.gz
+06ceee14b10fcccc3449d4205db71c799ea566e1a6425b4e5ff69024dce6702a56dd2251c35708dc0d89bffb96d429a86b4391c15ba12cbffb12dcb860f3aaa3  tirith-0.4.0.tar.gz
 bec8f6995fa3bc525f5aa0a2d0d83010592c39f70b9965d4cefc0e848ec4c378900811a6b20b27a9c8de97d8e4c2d282764187271c367ae15925e1d7596673a8  0001-add-apk-install-method.patch
 "
