@@ -1,8 +1,8 @@
 #!/bin/sh
 # shellcheck disable=SC1091
-# Verify staged APK repository trees and install every declared build. The
-# caller controls networking; CI runs this module with --network none, as it
-# did before extraction.
+# Verify staged APK repository trees and optionally install every declared
+# build. The caller controls networking: CI runs signature-only verification
+# offline and retains network access only for installation dependencies.
 set -eu
 
 usage() {

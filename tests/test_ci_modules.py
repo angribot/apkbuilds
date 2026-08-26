@@ -109,6 +109,179 @@ class CiModuleTest(unittest.TestCase):
         self.assertIn("arch=x86_64", completed.stderr)
         self.assertIn("package-origin=demo", completed.stderr)
 
+    def test_build_module_stages_a_complete_family(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            workspace = root / "workspace"
+            (workspace / "scripts").mkdir(parents=True)
+            (workspace / "packages" / "alpha").mkdir(parents=True)
+            (workspace / "scripts" / "lib.sh").write_text(
+                (SCRIPTS / "lib.sh").read_text()
+            )
+            (workspace / "scripts" / "prepare-builder.sh").write_text(
+                "#!/bin/sh\nexit 0\n"
+            )
+            (workspace / "packages" / "alpha" / "APKBUILD").write_text(
+                "pkgname=alpha\npkgver=1\npkgrel=0\n"
+            )
+            index_dir = root / "index"
+            index_dir.mkdir()
+            (index_dir / "APKINDEX").write_text(
+                "P:old-alpha\nV:0-r0\nA:x86_64\no:alpha\n"
+            )
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            fake_apk = fake_bin / "apk"
+            fake_apk.write_text("#!/bin/sh\nexit 0\n")
+            fake_apk.chmod(fake_apk.stat().st_mode | stat.S_IXUSR)
+            fake_cp = fake_bin / "cp"
+            fake_cp.write_text(
+                "#!/bin/sh\n"
+                "case \"$*\" in\n"
+                "*/etc/apk/keys/*) exit 0 ;;\n"
+                "*) exec /bin/cp \"$@\" ;;\n"
+                "esac\n"
+            )
+            fake_cp.chmod(fake_cp.stat().st_mode | stat.S_IXUSR)
+            fake_su = fake_bin / "su"
+            fake_su.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"$*\" >> \"$FAKE_SU_LOG\"\n"
+                "case \"$*\" in\n"                "*abuild\\ listpkg*) printf '%s\\n' alpha-1-r0.apk ;;\n"
+                "*abuild\\ -r*) mkdir -p \"$FAKE_BUILT\"; : > \"$FAKE_BUILT/alpha-1-r0.apk\" ;;\n"
+                "esac\n"
+                "exit 0\n"
+            )
+            fake_su.chmod(fake_su.stat().st_mode | stat.S_IXUSR)
+            fake_wget = fake_bin / "wget"
+            fake_wget.write_text(
+                "#!/bin/sh\n"
+                "output=\n"
+                "while [ \"$#\" -gt 0 ]; do\n"
+                "  if [ \"$1\" = -O ]; then output=$2; shift 2; continue; fi\n"
+                "  shift\n"
+                "done\n"
+                "case \"$output\" in\n"
+                "*/APKINDEX.tar.gz) tar -czf \"$output\" -C \"$FAKE_INDEX\" APKINDEX ;;\n"
+                "*) printf '%s\\n' package > \"$output\" ;;\n"
+                "esac\n"
+            )
+            fake_wget.chmod(fake_wget.stat().st_mode | stat.S_IXUSR)
+            fake_du = fake_bin / "du"
+            fake_du.write_text("#!/bin/sh\nprintf '%s %s\\n' 0 \"$2\"\n")
+            fake_du.chmod(fake_du.stat().st_mode | stat.S_IXUSR)
+            key = root / "public-key"
+            key.write_text("public\n")
+            output = root / "output"
+            cache_dirs = [root / name for name in ("distfiles", "cargo", "ccache", "sccache")]
+            for cache_dir in cache_dirs:
+                cache_dir.mkdir()
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": os.pathsep.join([str(fake_bin), env["PATH"]]),
+                    "FAKE_INDEX": str(index_dir),
+                    "FAKE_BUILT": str(output / "alpha" / "packages" / "x86_64"),
+                    "FAKE_SU_LOG": str(root / "su-log"),
+                }
+            )
+            completed = subprocess.run(
+                [
+                    "sh",
+                    str(SCRIPTS / "build-package-family.sh"),
+                    "--arch",
+                    "x86_64",
+                    "--origin",
+                    "alpha",
+                    "--published",
+                    "https://example.invalid/edge/x86_64",
+                    "--source-revision",
+                    "revision",
+                    "--workspace",
+                    str(workspace),
+                    "--output",
+                    str(output),
+                    "--repository-key",
+                    str(key),
+                    "--distfiles",
+                    str(cache_dirs[0]),
+                    "--cargo-home",
+                    str(cache_dirs[1]),
+                    "--ccache-dir",
+                    str(cache_dirs[2]),
+                    "--sccache-dir",
+                    str(cache_dirs[3]),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(
+                completed.returncode, 0, completed.stdout + completed.stderr
+            )
+            self.assertTrue(
+                (
+                    output
+                    / "built"
+                    / "x86_64"
+                    / "alpha"
+                    / "alpha-1-r0.apk"
+                ).exists(),
+                completed.stdout + completed.stderr,
+            )
+            self.assertIn(
+                "build_seconds=",
+                (
+                    output / "metrics" / "x86_64" / "alpha" / "build.txt"
+                ).read_text(),
+            )
+
+    def test_verify_module_reports_a_signature_failure_with_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            pages = root / "pages" / "edge" / "x86_64"
+            pages.mkdir(parents=True)
+            (pages / "APKINDEX.tar.gz").write_bytes(b"invalid")
+            workspace = root / "workspace"
+            (workspace / "scripts").mkdir(parents=True)
+            (workspace / "scripts" / "lib.sh").write_text(
+                (SCRIPTS / "lib.sh").read_text()
+            )
+            key = root / "public-key"
+            key.write_text("public\n")
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            fake_apk = fake_bin / "apk"
+            fake_apk.write_text("#!/bin/sh\nexit 1\n")
+            fake_apk.chmod(fake_apk.stat().st_mode | stat.S_IXUSR)
+            env = os.environ.copy()
+            env["PATH"] = os.pathsep.join([str(fake_bin), env["PATH"]])
+            completed = subprocess.run(
+                [
+                    "sh",
+                    str(SCRIPTS / "verify-repository.sh"),
+                    "--pages",
+                    str(root / "pages"),
+                    "--workspace",
+                    str(workspace),
+                    "--arch",
+                    "x86_64",
+                    "--repository-key",
+                    str(key),
+                    "--key-directory",
+                    str(root / "keys"),
+                    "--repositories-file",
+                    str(root / "repositories"),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("stage=signature", completed.stderr)
+        self.assertIn("arch=x86_64", completed.stderr)
+        self.assertIn("package-origin=all", completed.stderr)
+
     def test_verify_module_checks_and_installs_a_declared_build(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
