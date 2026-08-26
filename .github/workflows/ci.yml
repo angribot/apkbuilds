@@ -33,6 +33,9 @@ concurrency:
 
 env:
   PAGES_URL: https://angribot.github.io/apkbuilds
+  # Bump this when the Alpine/Rust toolchain changes so compiler caches cannot
+  # cross a toolchain boundary.
+  CI_TOOLCHAIN: alpine-edge-rust-v1
 
 jobs:
   check:
@@ -125,15 +128,19 @@ jobs:
       # Restore the newest compatible snapshot, then save this build under a
       # unique key. GitHub Actions cache entries are immutable, so the save key
       # must never reuse the compatibility prefix itself.
-      - name: Compute ccache cache keys
+      - name: Compute compiler cache keys
         id: ccache-key
         run: |
-          echo "prefix=apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-" >> "$GITHUB_OUTPUT"
-          echo "key=apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-${{ hashFiles(format('packages/{0}/**', matrix.origin)) }}-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
-      - name: Restore ccache
+          echo "prefix=apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-${{ env.CI_TOOLCHAIN }}-" >> "$GITHUB_OUTPUT"
+          echo "key=apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-${{ env.CI_TOOLCHAIN }}-${{ hashFiles(format('packages/{0}/**', matrix.origin)) }}-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+      - name: Restore compiler caches
+        id: ccache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ github.workspace }}/.cache/ccache-${{ matrix.origin }}
+          path: |
+            ${{ github.workspace }}/.cache/cargo-${{ matrix.origin }}
+            ${{ github.workspace }}/.cache/ccache-${{ matrix.origin }}
+            ${{ github.workspace }}/.cache/sccache-${{ matrix.origin }}
           key: ${{ steps.ccache-key.outputs.key }}
           restore-keys: ${{ steps.ccache-key.outputs.prefix }}
       - name: Build packages missing from the published APK repository
@@ -143,7 +150,10 @@ jobs:
           BRANCH: ${{ github.ref_name }}
         run: |
           mkdir -p "$RUNNER_TEMP/new"
-          mkdir -p .cache/distfiles .cache/ccache-${{ matrix.origin }}
+          mkdir -p .cache/distfiles \
+            .cache/cargo-${{ matrix.origin }} \
+            .cache/ccache-${{ matrix.origin }} \
+            .cache/sccache-${{ matrix.origin }}
           # An ephemeral key signs these packages: this job runs upstream
           # build scripts, so it must never see the repository signing key.
           docker run --rm \
@@ -152,17 +162,23 @@ jobs:
             -e BRANCH \
             -e PUBLISHED="$PAGES_URL/edge/${{ matrix.arch }}" \
             -e SOURCE_REVISION="${{ inputs.revision || github.sha }}" \
+            -e CARGO_HOME=/home/builder/.cache/cargo \
+            -e SCCACHE_DIR=/home/builder/.cache/sccache \
+            -e RUSTC_WRAPPER=sccache \
             -v "$GITHUB_WORKSPACE:/workspace:ro" \
             -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \
             -v "$RUNNER_TEMP/new:/new" \
             -v "$GITHUB_WORKSPACE/.cache/distfiles:/var/cache/distfiles" \
+            -v "$GITHUB_WORKSPACE/.cache/cargo-${{ matrix.origin }}:/home/builder/.cache/cargo" \
             -v "$GITHUB_WORKSPACE/.cache/ccache-${{ matrix.origin }}:/home/builder/.cache/ccache" \
+            -v "$GITHUB_WORKSPACE/.cache/sccache-${{ matrix.origin }}:/home/builder/.cache/sccache" \
             -w /workspace \
             alpine:edge sh -euxc '
               mkdir -p /new/source
               cp -R "/workspace/packages/$ORIGIN" /new/source/
               sh scripts/prepare-builder.sh \
-                /new /var/cache/distfiles /home/builder/.cache/ccache \
+                /new /var/cache/distfiles /home/builder/.cache/cargo \
+                /home/builder/.cache/ccache /home/builder/.cache/sccache \
                 "/new/source/$ORIGIN"
               . scripts/lib.sh
 
@@ -227,8 +243,14 @@ jobs:
                 exit 1
               fi
 
-              su builder -c \
-                "cd /new/source/$ORIGIN && REPODEST=\"/new/$ORIGIN\" abuild -r"
+              build_started=$(date +%s)
+              if ! su builder -c \
+                "cd /new/source/$ORIGIN && CARGO_HOME=\"$CARGO_HOME\" SCCACHE_DIR=\"$SCCACHE_DIR\" RUSTC_WRAPPER=\"$RUSTC_WRAPPER\" REPODEST=\"/new/$ORIGIN\" abuild -r"; then
+                printf "::error::build stage=compile arch=%s package-origin=%s declared-build=%s published-build(s)=%s\\n" \
+                  "$ARCH" "$ORIGIN" "$declared" "$published_builds" >&2
+                exit 1
+              fi
+              build_seconds=$(( $(date +%s) - build_started ))
               built="/new/$ORIGIN/packages/$ARCH"
               actual="/tmp/actual-$ORIGIN"
               find "$built" -maxdepth 1 -type f -name "*.apk" \
@@ -265,17 +287,45 @@ jobs:
               candidate="/new/built/$ARCH/$ORIGIN"
               mkdir -p "$candidate"
               cp "$built"/*.apk "$candidate/"
+              metrics="/new/metrics/$ARCH/$ORIGIN"
+              mkdir -p "$metrics"
+              {
+                printf "origin=%s\\n" "$ORIGIN"
+                printf "arch=%s\\n" "$ARCH"
+                printf "declared_build=%s\\n" "$declared"
+                printf "published_builds=%s\\n" "$published_builds"
+                printf "build_seconds=%s\\n" "$build_seconds"
+                set -- $(du -sb /home/builder/.cache/ccache)
+                printf "ccache_size_bytes=%s\\n" "$1"
+                set -- $(du -sb /home/builder/.cache/sccache)
+                printf "sccache_size_bytes=%s\\n" "$1"
+                printf "%s\\n" "ccache_stats_begin"
+                su builder -c "ccache --show-stats" 2>&1 || true
+                printf "%s\\n" "sccache_stats_begin"
+                su builder -c "sccache --show-stats" 2>&1 || true
+              } > "$metrics/build.txt"
             '
-      - name: Save distfiles cache
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ github.workspace }}/.cache/distfiles
-          key: apkbuilds-distfiles-${{ matrix.arch }}-${{ matrix.origin }}-${{ hashFiles(format('packages/{0}/APKBUILD', matrix.origin)) }}
-      - name: Save ccache
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ github.workspace }}/.cache/ccache-${{ matrix.origin }}
-          key: ${{ steps.ccache-key.outputs.key }}
+      - name: Report compiler cache metrics
+        env:
+          CACHE_HIT: ${{ steps.ccache.outputs.cache-hit }}
+        run: |
+          metrics="$RUNNER_TEMP/new/metrics/${{ matrix.arch }}/${{ matrix.origin }}/build.txt"
+          if [ -f "$metrics" ]; then
+            if [ "$CACHE_HIT" = true ]; then
+              echo 'build_mode=warm' >> "$metrics"
+            else
+              echo 'build_mode=cold' >> "$metrics"
+            fi
+            cat "$metrics"
+            {
+              echo '### Compiler cache metrics'
+              echo
+              echo "cache_restore_hit=$CACHE_HIT"
+              cat "$metrics"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "no compiler cache metrics: no package build for ${{ matrix.arch }} ${{ matrix.origin }}"
+          fi
       - name: Stage the built packages
         id: stage
         run: |
@@ -286,6 +336,23 @@ jobs:
             echo 'built=false' >> "$GITHUB_OUTPUT"
             echo "no new packages for ${{ matrix.arch }} ${{ matrix.origin }}"
           fi
+      # Cache entries are immutable and a no-op build has no new compiler
+      # inputs. Only a successfully staged package build may save them.
+      - name: Save distfiles cache
+        if: steps.stage.outputs.built == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.cache/distfiles
+          key: apkbuilds-distfiles-${{ matrix.arch }}-${{ matrix.origin }}-${{ hashFiles(format('packages/{0}/APKBUILD', matrix.origin)) }}
+      - name: Save compiler caches
+        if: steps.stage.outputs.built == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ github.workspace }}/.cache/cargo-${{ matrix.origin }}
+            ${{ github.workspace }}/.cache/ccache-${{ matrix.origin }}
+            ${{ github.workspace }}/.cache/sccache-${{ matrix.origin }}
+          key: ${{ steps.ccache-key.outputs.key }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: steps.stage.outputs.built == 'true'
         with:

@@ -4,7 +4,7 @@
 # Runs as root inside an alpine container. Arguments are writable directories
 # to hand to the builder user; never pass the source checkout here.
 set -eu
-apk add --no-cache alpine-sdk ccache curl python3
+apk add --no-cache alpine-sdk ccache sccache curl python3
 adduser -D builder
 addgroup builder abuild
 mkdir -p /etc/doas.d

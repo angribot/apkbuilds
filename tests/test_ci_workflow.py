@@ -137,10 +137,11 @@ class PackageOriginBuildTest(unittest.TestCase):
         self.assertIn('-v "$GITHUB_WORKSPACE:/workspace:ro"', build)
         self.assertIn('cp -R "/workspace/packages/$ORIGIN" /new/source/', build)
         self.assertIn(
-            "sh scripts/prepare-builder.sh \\\n                /new /var/cache/distfiles /home/builder/.cache/ccache \\\n                \"/new/source/$ORIGIN\"",
+            "sh scripts/prepare-builder.sh \\\n                /new /var/cache/distfiles /home/builder/.cache/cargo \\\n                /home/builder/.cache/ccache /home/builder/.cache/sccache \\\n                \"/new/source/$ORIGIN\"",
             build,
         )
-        self.assertIn('cd /new/source/$ORIGIN && REPODEST=', build)
+        self.assertIn('cd /new/source/$ORIGIN && CARGO_HOME=', build)
+        self.assertIn('REPODEST=', build)
         self.assertNotIn("prepare-builder.sh /new /workspace", build)
 
     def test_builder_setup_documents_writable_directory_boundary(self):
@@ -149,16 +150,17 @@ class PackageOriginBuildTest(unittest.TestCase):
         self.assertIn('chown -R builder:builder "$directory"', setup)
 
     def test_ccache_snapshots_use_unique_keys_with_compatible_fallback(self):
-        key_start = WORKFLOW.index("- name: Compute ccache cache keys")
-        restore_start = WORKFLOW.index("- name: Restore ccache", key_start)
-        save_start = WORKFLOW.index("- name: Save ccache", restore_start)
-        stage_start = WORKFLOW.index("- name: Stage", save_start)
+        key_start = WORKFLOW.index("- name: Compute compiler cache keys")
+        restore_start = WORKFLOW.index("- name: Restore compiler caches", key_start)
+        stage_start = WORKFLOW.index("- name: Stage", restore_start)
+        save_start = WORKFLOW.index("- name: Save compiler caches", stage_start)
+        upload_start = WORKFLOW.index("- uses: actions/upload-artifact", save_start)
         key_step = WORKFLOW[key_start:restore_start]
-        restore = WORKFLOW[restore_start:save_start]
-        save = WORKFLOW[save_start:stage_start]
+        restore = WORKFLOW[restore_start:stage_start]
+        save = WORKFLOW[save_start:upload_start]
         prefix = (
             "apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-"
-            "${{ runner.os }}-"
+            "${{ runner.os }}-${{ env.CI_TOOLCHAIN }}-"
         )
         unique_suffix = (
             "${{ hashFiles(format('packages/{0}/**', matrix.origin)) }}-"
@@ -168,7 +170,25 @@ class PackageOriginBuildTest(unittest.TestCase):
         self.assertIn(f'echo "key={prefix}{unique_suffix}"', key_step)
         self.assertIn("key: ${{ steps.ccache-key.outputs.key }}", restore)
         self.assertIn("restore-keys: ${{ steps.ccache-key.outputs.prefix }}", restore)
+        self.assertIn(".cache/cargo-${{ matrix.origin }}", restore)
+        self.assertIn(".cache/sccache-${{ matrix.origin }}", restore)
+        self.assertIn("CACHE_HIT: ${{ steps.ccache.outputs.cache-hit }}", WORKFLOW)
         self.assertIn("key: ${{ steps.ccache-key.outputs.key }}", save)
+        self.assertIn(".cache/cargo-${{ matrix.origin }}", save)
+        self.assertIn(".cache/sccache-${{ matrix.origin }}", save)
+        self.assertIn("if: steps.stage.outputs.built == 'true'", save)
+
+    def test_build_reports_compiler_cache_and_timing_metrics(self):
+        self.assertIn("CI_TOOLCHAIN: alpine-edge-rust-v1", WORKFLOW)
+        self.assertIn("RUSTC_WRAPPER=sccache", WORKFLOW)
+        self.assertIn("ccache --show-stats", WORKFLOW)
+        self.assertIn("sccache --show-stats", WORKFLOW)
+        self.assertIn("build_seconds=", WORKFLOW)
+        self.assertIn("du -sb", WORKFLOW)
+        self.assertIn("GITHUB_STEP_SUMMARY", WORKFLOW)
+        self.assertIn(
+            "cargo build", (ROOT / "packages/orbien/APKBUILD").read_text()
+        )
 
     def test_build_uses_complete_declared_and_published_families(self):
         self.assertIn("abuild listpkg", WORKFLOW)
