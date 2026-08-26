@@ -31,6 +31,8 @@ class BranchProtectionTest(unittest.TestCase):
         self.assertIn('DeployKey', SCRIPT)
         self.assertIn('bypass_actors[]?] | length == 1', SCRIPT)
         self.assertIn('bypass_mode == "always"', SCRIPT)
+        self.assertIn('UPDATE_DEPLOY_KEY', SCRIPT)
+        self.assertIn('PAGES_DEPLOY_KEY', SCRIPT)
 
     def test_verifier_is_posix_sh_clean(self):
         completed = subprocess.run(

@@ -82,5 +82,25 @@ check_ruleset() {
   echo "verified $_vbr_name ruleset ($_vbr_id)"
 }
 
+check_workflow_wiring() {
+  _vbr_workspace=${GITHUB_WORKSPACE:-.}
+  _vbr_updater="$_vbr_workspace/.github/workflows/update.yml"
+  _vbr_ci="$_vbr_workspace/.github/workflows/ci.yml"
+  _vbr_update_key=UPDATE_DEPLOY_KEY
+  if ! grep -Fq "ssh-key: \${{ secrets.$_vbr_update_key }}" "$_vbr_updater" || \
+     grep -Fq 'PAGES_DEPLOY_KEY' "$_vbr_updater"; then
+    echo '::error::Update packages is not wired exclusively to UPDATE_DEPLOY_KEY' >&2
+    return 1
+  fi
+  _vbr_pages_key=PAGES_DEPLOY_KEY
+  if ! grep -Fq "PAGES_DEPLOY_KEY: \${{ secrets.$_vbr_pages_key }}" "$_vbr_ci" || \
+     grep -Fq 'UPDATE_DEPLOY_KEY' "$_vbr_ci"; then
+    echo '::error::CI publication is not wired exclusively to PAGES_DEPLOY_KEY' >&2
+    return 1
+  fi
+  echo 'verified workflow-to-deploy-key wiring'
+}
+
 check_ruleset 'Protect main write path' 'refs/heads/main' true
 check_ruleset 'Protect gh-pages write path' 'refs/heads/gh-pages' false
+check_workflow_wiring
