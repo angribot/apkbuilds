@@ -15,6 +15,14 @@ MERGER = MERGER_PATH.read_text()
 
 
 class PackageOriginBuildTest(unittest.TestCase):
+    def test_package_markdown_inputs_still_trigger_ci(self):
+        triggers = WORKFLOW[: WORKFLOW.index("permissions:")]
+        self.assertNotIn("paths-ignore:", triggers)
+        self.assertEqual(triggers.count("paths:"), 2)
+        self.assertEqual(triggers.count("- '**'"), 2)
+        self.assertEqual(triggers.count("- '!**.md'"), 2)
+        self.assertEqual(triggers.count("- 'packages/**'"), 2)
+
     def test_manual_dispatch_plans_the_selected_revision(self):
         self.assertIn("revision:", WORKFLOW)
         self.assertIn("base_revision:", WORKFLOW)
