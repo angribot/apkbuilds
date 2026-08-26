@@ -105,18 +105,10 @@ verify_arch() {
   stage=install
   for origin in $(all_origins); do
     supports_arch "$arch" "$workspace/packages/$origin/APKBUILD" || continue
-    declared=$(apkbuild_field pkgver \
-      "$workspace/packages/$origin/APKBUILD")-r$(
-      apkbuild_field pkgrel "$workspace/packages/$origin/APKBUILD"
-    )
+    declared=$(apkbuild_declared_build "$workspace/packages/$origin")
     versions="$work/published-versions-$origin"
     apkindex_origin_versions "$index" "$origin" > "$versions"
-    published_builds=
-    while IFS= read -r version; do
-      [ -n "$published_builds" ] && published_builds="$published_builds "
-      published_builds="$published_builds$version"
-    done < "$versions"
-    [ -n "$published_builds" ] || published_builds='<none>'
+    published_builds=$(format_published_builds "$versions")
     spec=$(apkbuild_pinned_spec "$workspace/packages/$origin")
     apk_add_pinned_origin \
       "$arch" "$origin" "$declared" "$published_builds" "$spec"

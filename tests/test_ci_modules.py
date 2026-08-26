@@ -52,7 +52,9 @@ class CiModuleTest(unittest.TestCase):
         self.assertIn("--origin \"$ORIGIN\"", build)
         self.assertIn("--private-key-file /private-key", sign)
         self.assertIn("--network none", sign)
-        self.assertIn("--network none", verify)
+        # Installation retains its existing network access for Alpine
+        # dependencies; extraction must not silently change that boundary.
+        self.assertNotIn("--network none", verify)
 
     def test_modules_log_stage_architecture_and_origin_on_failure(self):
         for path in MODULES.values():

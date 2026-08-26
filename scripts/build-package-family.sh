@@ -106,23 +106,15 @@ assert_origin_directory "$workspace/packages/$origin"
 expected="/tmp/expected-$origin"
 published_packages="/tmp/published-$origin"
 su builder -c \
-  "cd $output/source/$origin && abuild listpkg" \
+  "cd \"$output/source/$origin\" && abuild listpkg" \
   > "$expected"
 apkindex_origin_apks \
   /tmp/published/APKINDEX "$origin" > "$published_packages"
-declared=$(apkbuild_field pkgver \
-  "$workspace/packages/$origin/APKBUILD")-r$(
-  apkbuild_field pkgrel "$workspace/packages/$origin/APKBUILD"
-)
+declared=$(apkbuild_declared_build "$workspace/packages/$origin")
 versions="/tmp/published-versions-$origin"
 apkindex_origin_versions \
   /tmp/published/APKINDEX "$origin" > "$versions"
-published_builds=
-while IFS= read -r version; do
-  [ -n "$published_builds" ] && published_builds="$published_builds "
-  published_builds="$published_builds$version"
-done < "$versions"
-[ -n "$published_builds" ] || published_builds='<none>'
+published_builds=$(format_published_builds "$versions")
 if ! package_sets_equal "$expected" "$published_packages"; then
   printf '::notice::%s package set mismatch: source revision=%s declared build=%s published build(s)=%s\n' \
     "$origin" "$source_revision" "$declared" "$published_builds"
@@ -154,7 +146,7 @@ fi
 stage=compile
 build_started=$(date +%s)
 if ! su builder -c \
-  "cd $output/source/$origin && CARGO_HOME=\"$cargo_home\" SCCACHE_DIR=\"$sccache_dir\" RUSTC_WRAPPER=sccache REPODEST=\"$output/$origin\" abuild -r"; then
+  "cd \"$output/source/$origin\" && CARGO_HOME=\"$cargo_home\" SCCACHE_DIR=\"$sccache_dir\" RUSTC_WRAPPER=sccache REPODEST=\"$output/$origin\" abuild -r"; then
   printf '::error::build stage=compile arch=%s package-origin=%s declared-build=%s published-build(s)=%s\n' \
     "$arch" "$origin" "$declared" "$published_builds" >&2
   exit 1

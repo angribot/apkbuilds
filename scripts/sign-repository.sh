@@ -42,6 +42,8 @@ done
   exit 2
 }
 
+arch=all
+origin=all
 stage=arguments
 failure() {
   status=$?
@@ -61,7 +63,8 @@ cp "$private_key_file" "$private_key"
 cp "$repository_key" /etc/apk/keys/
 
 stage='package-signing'
-for arch in x86_64 aarch64; do
+for sign_arch in x86_64 aarch64; do
+  arch=$sign_arch
   apk_repository="$pages/edge/$arch"
   test -d "$apk_repository" || continue
   for package in "$apk_repository"/*.apk; do

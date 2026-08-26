@@ -181,10 +181,11 @@ jobs:
       - name: Report compiler cache metrics
         env:
           CACHE_HIT: ${{ steps.ccache.outputs.cache-hit }}
+          CACHE_MATCHED_KEY: ${{ steps.ccache.outputs.cache-matched-key }}
         run: |
           metrics="$RUNNER_TEMP/new/metrics/${{ matrix.arch }}/${{ matrix.origin }}/build.txt"
           if [ -f "$metrics" ]; then
-            if [ "$CACHE_HIT" = true ]; then
+            if [ -n "$CACHE_MATCHED_KEY" ]; then
               echo 'build_mode=warm' >> "$metrics"
             else
               echo 'build_mode=cold' >> "$metrics"
@@ -193,7 +194,8 @@ jobs:
             {
               echo '### Compiler cache metrics'
               echo
-              echo "cache_restore_hit=$CACHE_HIT"
+              echo "cache_exact_hit=$CACHE_HIT"
+              echo "cache_restore_key=$CACHE_MATCHED_KEY"
               cat "$metrics"
             } >> "$GITHUB_STEP_SUMMARY"
           else
@@ -366,7 +368,7 @@ jobs:
           path: ${{ runner.temp }}/pages
       - name: Install every declared build from the staged snapshot
         run: |
-          docker run --rm --network none \
+          docker run --rm \
             -v "$RUNNER_TEMP/pages:/pages:ro" \
             -v "$GITHUB_WORKSPACE:/workspace:ro" \
             -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \

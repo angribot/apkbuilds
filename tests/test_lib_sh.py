@@ -41,6 +41,19 @@ class ApkbuildFieldTest(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(out.strip(), "demo=2.5.21-r3")
 
+    def test_formats_declared_and_published_build_identities(self):
+        origin = self.write_apkbuild("pkgname=demo\npkgver=2.5.21\npkgrel=3\n")
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as versions:
+            self.addCleanup(pathlib.Path(versions.name).unlink)
+            versions.write("2.4.0-r1\n2.5.21-r3\n")
+            versions.flush()
+            status, out = run_helper(
+                f'apkbuild_declared_build "{origin}"; '
+                f'format_published_builds "{versions.name}"'
+            )
+        self.assertEqual(status, 0)
+        self.assertEqual(out.splitlines(), ["2.5.21-r3", "2.4.0-r1 2.5.21-r3"])
+
     def test_ignores_indented_and_suffixed_keys(self):
         # `pkgver_extra=` and an indented assignment inside a build function
         # must not shadow the real top-level field.
@@ -209,7 +222,10 @@ update)
     [ -f "$APK_UPDATE_COUNT" ] && count=$(cat "$APK_UPDATE_COUNT")
     count=$((count + 1))
     printf '%s\\n' "$count" > "$APK_UPDATE_COUNT"
-    [ "$count" -le "${APK_UPDATE_FAILURES:-0}" ] && exit 1
+    if [ "$count" -le "${APK_UPDATE_FAILURES:-0}" ]; then
+        printf '%s\\n' "${APK_UPDATE_ERROR:-temporary error (try again later)}" >&2
+        exit 1
+    fi
     exit 0
     ;;
 add)
@@ -252,6 +268,13 @@ esac
         completed = self.run_helper_with_env("apk_update_with_retry")
         self.assertNotEqual(completed.returncode, 0)
         self.assertEqual((self.root / "update-count").read_text().strip(), "3")
+
+    def test_deterministic_index_failure_is_not_retried(self):
+        self.env["APK_UPDATE_FAILURES"] = "3"
+        self.env["APK_UPDATE_ERROR"] = "BAD signature"
+        completed = self.run_helper_with_env("apk_update_with_retry")
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual((self.root / "update-count").read_text().strip(), "1")
 
     def test_resolver_failure_is_not_retried_and_logs_build_identity(self):
         self.env["APK_ADD_EXIT"] = "1"

@@ -3,6 +3,21 @@
 # Runs before the repository signing key enters the isolated signer.
 set -eux
 
+arch=all
+origin=all
+stage=arguments
+work=
+failure() {
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    printf '::error::merge stage=%s arch=%s package-origin=%s exit=%s\n' \
+      "$stage" "$arch" "$origin" "$status" >&2
+  fi
+  [ -z "$work" ] || rm -rf "$work"
+  exit "$status"
+}
+trap failure EXIT
+
 pages=$1
 built=$2
 workspace=$3
@@ -14,6 +29,8 @@ repository_key=$4
 cp "$repository_key" /etc/apk/keys/
 
 for arch in x86_64 aarch64; do
+  origin=all
+  stage='baseline-signature'
   source="$built/$arch"
   apk_repository="$pages/edge/$arch"
   apk verify "$apk_repository/APKINDEX.tar.gz"
@@ -34,6 +51,7 @@ for arch in x86_64 aarch64; do
   for family in "$source"/*; do
     test -d "$family" || continue
     origin=${family##*/}
+    stage='candidate-validation'
     assert_origin_directory "$workspace/packages/$origin"
     declared=$(apkbuild_field pkgver \
       "$workspace/packages/$origin/APKBUILD")-r$(
@@ -60,6 +78,7 @@ for arch in x86_64 aarch64; do
       "$work/$origin-indexed" "$work/$origin-physical"
 
     previous="$work/$origin-previous"
+    stage='family-merge'
     apkindex_origin_apks "$baseline" "$origin" > "$previous"
     while IFS= read -r package; do
       test -f "$apk_repository/$package"
@@ -72,4 +91,5 @@ for arch in x86_64 aarch64; do
     done
   done
   rm -rf "$work"
+  work=
 done

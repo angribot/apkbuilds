@@ -143,7 +143,9 @@ class PackageOriginBuildTest(unittest.TestCase):
             'sh "$workspace/scripts/prepare-builder.sh" \\\n  "$output" "$distfiles" "$cargo_home" "$ccache_dir" "$sccache_dir"',
             BUILD_MODULE,
         )
-        self.assertIn('cd $output/source/$origin && CARGO_HOME=', BUILD_MODULE)
+        self.assertIn(
+            'cd \\\"$output/source/$origin\\\" && CARGO_HOME=', BUILD_MODULE
+        )
         self.assertIn('REPODEST=', BUILD_MODULE)
         self.assertNotIn("prepare-builder.sh /new /workspace", build)
 
@@ -176,6 +178,10 @@ class PackageOriginBuildTest(unittest.TestCase):
         self.assertIn(".cache/cargo-${{ matrix.origin }}", restore)
         self.assertIn(".cache/sccache-${{ matrix.origin }}", restore)
         self.assertIn("CACHE_HIT: ${{ steps.ccache.outputs.cache-hit }}", WORKFLOW)
+        self.assertIn(
+            "CACHE_MATCHED_KEY: ${{ steps.ccache.outputs.cache-matched-key }}", WORKFLOW
+        )
+        self.assertIn("cache_restore_key=", WORKFLOW)
         self.assertIn("key: ${{ steps.ccache-key.outputs.key }}", save)
         self.assertIn(".cache/cargo-${{ matrix.origin }}", save)
         self.assertIn(".cache/sccache-${{ matrix.origin }}", save)
