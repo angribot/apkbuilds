@@ -105,19 +105,20 @@ class PackageOriginBuildTest(unittest.TestCase):
         self.assertIn("published build(s)=", BUILD_MODULE)
         self.assertIn("package set mismatch:", BUILD_MODULE)
 
-    def test_workflow_exposes_a_stable_branch_protection_gate(self):
-        gate_start = WORKFLOW.index("\n  gate:")
-        gate = WORKFLOW[gate_start:]
-        self.assertIn(
-            "needs: [check, build, sign, verify, publish]", gate
-        )
-        self.assertIn("EVENT: ${{ github.event_name }}", gate)
-        self.assertIn("HAS_ORIGINS: ${{ needs.check.outputs.has_origins }}", gate)
-        self.assertNotIn("needs.plan", gate)
-        self.assertIn('test "$CHECK" = success', gate)
-        self.assertIn('if [ "$HAS_ORIGINS" = true ]; then', gate)
-        self.assertIn('test "$BUILD" = success', gate)
-        self.assertIn('test "$PUBLISH" = success', gate)
+    def test_publication_job_is_the_stable_branch_protection_check(self):
+        publish_start = WORKFLOW.index("\n  publish:")
+        publish = WORKFLOW[publish_start:]
+        self.assertIn("if: always()", publish)
+        self.assertIn("needs: [check, build, sign, verify]", publish)
+        self.assertNotIn("\n  gate:", WORKFLOW)
+        self.assertIn("EVENT: ${{ github.event_name }}", publish)
+        self.assertIn("HAS_ORIGINS: ${{ needs.check.outputs.has_origins }}", publish)
+        self.assertIn("REF: ${{ github.ref_name }}", publish)
+        self.assertIn('test "$CHECK" = success', publish)
+        self.assertIn('if [ "$HAS_ORIGINS" = true ]; then', publish)
+        self.assertIn('test "$BUILD" = success', publish)
+        self.assertIn('test "$SIGN" = success', publish)
+        self.assertIn('test "$VERIFY" = success', publish)
 
     def test_publication_uses_an_explicit_deploy_key(self):
         publish_start = WORKFLOW.index("  publish:")
@@ -302,7 +303,8 @@ class PackageOriginReplacementTest(unittest.TestCase):
         publish_job = WORKFLOW.index("\n  publish:")
         self.assertLess(verify_job, publish_job)
         self.assertIn("verify:\n    needs: sign", WORKFLOW)
-        self.assertIn("publish:\n    needs: verify", WORKFLOW)
+        self.assertIn("publish:\n    if: always()", WORKFLOW)
+        self.assertIn("needs: [check, build, sign, verify]", WORKFLOW)
         self.assertIn("snapshot_created: ${{ steps.snapshot.outputs.created }}", WORKFLOW)
         staged_verification = WORKFLOW[verify_job:publish_job]
         self.assertIn("if: needs.sign.outputs.snapshot_created == 'true'", staged_verification)

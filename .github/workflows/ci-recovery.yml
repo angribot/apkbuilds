@@ -34,7 +34,6 @@ jobs:
             [ -n "$job" ] || continue
             case "$job" in
               publish) publication_failed=true ;;
-              gate) ;;
               *) non_publication_failed=true ;;
             esac
           done < "$failed_jobs"

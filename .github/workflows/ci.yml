@@ -386,16 +386,50 @@ jobs:
                 --install-declared-builds
 
 
+  # This job is both the publication step on main and the stable required
+  # check on pull requests. Keeping the result check here avoids a separate
+  # gate job that can become stale while the actual publication is unchanged.
   publish:
-    needs: verify
+    if: always()
+    needs: [check, build, sign, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Check required CI results
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          HAS_ORIGINS: ${{ needs.check.outputs.has_origins }}
+          CHECK: ${{ needs.check.result }}
+          BUILD: ${{ needs.build.result }}
+          SIGN: ${{ needs.sign.result }}
+          VERIFY: ${{ needs.verify.result }}
+        run: |
+          status=0
+          test "$CHECK" = success || status=1
+          if [ "$HAS_ORIGINS" = true ]; then
+            test "$BUILD" = success || status=1
+          fi
+          if [ "$EVENT" = pull_request ] || [ "$REF" != "$DEFAULT_BRANCH" ] || \
+             [ "$HAS_ORIGINS" != true ]; then
+            exit "$status"
+          fi
+          test "$SIGN" = success || status=1
+          test "$VERIFY" = success || status=1
+          exit "$status"
+
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: >-
+          github.ref_name == github.event.repository.default_branch &&
+          needs.sign.result == 'success' && needs.verify.result == 'success'
         with:
           name: signed-repository
           path: pages
       - name: Push the APK repository to gh-pages
+        if: >-
+          github.ref_name == github.event.repository.default_branch &&
+          needs.sign.result == 'success' && needs.verify.result == 'success'
         env:
           PAGES_DEPLOY_KEY: ${{ secrets.PAGES_DEPLOY_KEY }}
         run: |
@@ -416,35 +450,3 @@ jobs:
           # history of every .apk ever published.
           git commit -q -m "Publish $GITHUB_SHA"
           git push -q --force origin gh-pages
-
-  # Protect main with this stable check instead of the dynamic package matrix.
-  # Publication jobs are required only when this run planned package origins;
-  # pull requests and documentation-only pushes correctly accept skipped
-  # publication jobs.
-  gate:
-    if: always()
-    needs: [check, build, sign, verify, publish]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check required CI results
-        env:
-          EVENT: ${{ github.event_name }}
-          HAS_ORIGINS: ${{ needs.check.outputs.has_origins }}
-          CHECK: ${{ needs.check.result }}
-          BUILD: ${{ needs.build.result }}
-          SIGN: ${{ needs.sign.result }}
-          VERIFY: ${{ needs.verify.result }}
-          PUBLISH: ${{ needs.publish.result }}
-        run: |
-          status=0
-          test "$CHECK" = success || status=1
-          if [ "$HAS_ORIGINS" = true ]; then
-            test "$BUILD" = success || status=1
-          fi
-          if [ "$EVENT" = pull_request ] || [ "$HAS_ORIGINS" != true ]; then
-            exit "$status"
-          fi
-          test "$SIGN" = success || status=1
-          test "$VERIFY" = success || status=1
-          test "$PUBLISH" = success || status=1
-          exit "$status"
