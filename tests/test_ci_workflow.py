@@ -105,20 +105,22 @@ class PackageOriginBuildTest(unittest.TestCase):
         self.assertIn("published build(s)=", BUILD_MODULE)
         self.assertIn("package set mismatch:", BUILD_MODULE)
 
-    def test_publication_job_is_the_stable_branch_protection_check(self):
-        publish_start = WORKFLOW.index("\n  publish:")
-        publish = WORKFLOW[publish_start:]
-        self.assertIn("if: always()", publish)
-        self.assertIn("needs: [check, build, sign, verify]", publish)
+    def test_ci_job_is_the_stable_branch_protection_check(self):
+        ci_start = WORKFLOW.index("\n  ci:")
+        publish_start = WORKFLOW.index("\n  publish:", ci_start)
+        ci = WORKFLOW[ci_start:publish_start]
+        self.assertIn("if: always()", ci)
+        self.assertIn("needs: [check, build, sign, verify]", ci)
         self.assertNotIn("\n  gate:", WORKFLOW)
-        self.assertIn("EVENT: ${{ github.event_name }}", publish)
-        self.assertIn("HAS_ORIGINS: ${{ needs.check.outputs.has_origins }}", publish)
-        self.assertIn("REF: ${{ github.ref_name }}", publish)
-        self.assertIn('test "$CHECK" = success', publish)
-        self.assertIn('if [ "$HAS_ORIGINS" = true ]; then', publish)
-        self.assertIn('test "$BUILD" = success', publish)
-        self.assertIn('test "$SIGN" = success', publish)
-        self.assertIn('test "$VERIFY" = success', publish)
+        self.assertIn("EVENT: ${{ github.event_name }}", ci)
+        self.assertIn("HAS_ORIGINS: ${{ needs.check.outputs.has_origins }}", ci)
+        self.assertIn("REF: ${{ github.ref_name }}", ci)
+        self.assertIn('test "$CHECK" = success', ci)
+        self.assertIn('if [ "$HAS_ORIGINS" = true ]; then', ci)
+        self.assertIn('test "$BUILD" = success', ci)
+        self.assertIn('test "$SIGN" = success', ci)
+        self.assertIn('test "$VERIFY" = success', ci)
+        self.assertIn("publish:\n    needs: [ci, sign, verify]", WORKFLOW)
 
     def test_publication_uses_an_explicit_deploy_key(self):
         publish_start = WORKFLOW.index("  publish:")
@@ -303,8 +305,8 @@ class PackageOriginReplacementTest(unittest.TestCase):
         publish_job = WORKFLOW.index("\n  publish:")
         self.assertLess(verify_job, publish_job)
         self.assertIn("verify:\n    needs: sign", WORKFLOW)
-        self.assertIn("publish:\n    if: always()", WORKFLOW)
-        self.assertIn("needs: [check, build, sign, verify]", WORKFLOW)
+        self.assertIn("ci:\n    if: always()", WORKFLOW)
+        self.assertIn("publish:\n    needs: [ci, sign, verify]", WORKFLOW)
         self.assertIn("snapshot_created: ${{ steps.snapshot.outputs.created }}", WORKFLOW)
         staged_verification = WORKFLOW[verify_job:publish_job]
         self.assertIn("if: needs.sign.outputs.snapshot_created == 'true'", staged_verification)

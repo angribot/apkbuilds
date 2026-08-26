@@ -386,10 +386,9 @@ jobs:
                 --install-declared-builds
 
 
-  # This job is both the publication step on main and the stable required
-  # check on pull requests. Keeping the result check here avoids a separate
-  # gate job that can become stale while the actual publication is unchanged.
-  publish:
+  # This is the stable required check for pull requests. It validates the
+  # dynamic jobs without pretending that a pull request publishes anything.
+  ci:
     if: always()
     needs: [check, build, sign, verify]
     runs-on: ubuntu-latest
@@ -419,17 +418,20 @@ jobs:
           test "$VERIFY" = success || status=1
           exit "$status"
 
+  publish:
+    needs: [ci, sign, verify]
+    if: >-
+      github.ref_name == github.event.repository.default_branch &&
+      needs.ci.result == 'success' && needs.sign.result == 'success' &&
+      needs.verify.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: >-
-          github.ref_name == github.event.repository.default_branch &&
-          needs.sign.result == 'success' && needs.verify.result == 'success'
         with:
           name: signed-repository
           path: pages
       - name: Push the APK repository to gh-pages
-        if: >-
-          github.ref_name == github.event.repository.default_branch &&
-          needs.sign.result == 'success' && needs.verify.result == 'success'
         env:
           PAGES_DEPLOY_KEY: ${{ secrets.PAGES_DEPLOY_KEY }}
         run: |
