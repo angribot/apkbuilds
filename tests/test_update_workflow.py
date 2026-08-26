@@ -9,15 +9,15 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKFLOW = (ROOT / ".github" / "workflows" / "update.yml").read_text()
 UPDATER_PATH = ROOT / "scripts" / "update-packages.sh"
 UPDATER = UPDATER_PATH.read_text()
+MANIFEST_PATH = ROOT / "packages" / "updaters"
 
-PACKAGE_ORIGINS = (
-    ("gnupg", "scripts/update-gnupg.py", "packages/gnupg/APKBUILD"),
-    ("zerostack", "scripts/update-zerostack.py", "packages/zerostack/APKBUILD"),
-    ("tirith", "scripts/update-tirith.py", "packages/tirith/APKBUILD"),
-    ("ports-box", "scripts/update-ports-box.py", "packages/ports-box/APKBUILD"),
-    ("orbien", "scripts/update-orbien.py", "packages/orbien/APKBUILD"),
-    ("realm", "scripts/update-realm.py", "packages/realm/APKBUILD"),
-)
+
+def read_manifest():
+    entries = []
+    for line in MANIFEST_PATH.read_text().splitlines():
+        if line and not line.startswith("#"):
+            entries.append(tuple(line.split("|")))
+    return entries
 
 
 class PackageUpdateTest(unittest.TestCase):
@@ -29,12 +29,33 @@ class PackageUpdateTest(unittest.TestCase):
         self.assertNotIn("strategy:", WORKFLOW)
         self.assertNotIn("matrix:", WORKFLOW)
 
-        positions = []
-        for package_origin, updater, apkbuild in PACKAGE_ORIGINS:
-            entry = f"{package_origin}|{updater}|{apkbuild}"
-            position = UPDATER.index(entry)
-            positions.append(position)
-        self.assertEqual(positions, sorted(positions))
+        self.assertIn(
+            "sh scripts/update-packages.sh packages/updaters", WORKFLOW
+        )
+        self.assertNotIn("scripts/update-gnupg.py", UPDATER)
+
+        entries = read_manifest()
+        self.assertEqual(
+            [origin for origin, _, _ in entries],
+            ["gnupg", "zerostack", "tirith", "ports-box", "orbien", "realm"],
+        )
+
+    def test_manifest_registers_every_origin_updater_and_test(self):
+        entries = read_manifest()
+        registered = {origin for origin, _, _ in entries}
+        package_origins = {
+            path.parent.name for path in (ROOT / "packages").glob("*/APKBUILD")
+        }
+        self.assertEqual(registered, package_origins)
+
+        for origin, updater, test in entries:
+            with self.subTest(origin=origin):
+                if updater == "-":
+                    self.assertEqual(test, "-")
+                else:
+                    self.assertTrue((ROOT / updater).is_file(), updater)
+                    self.assertNotEqual(test, "-")
+                    self.assertTrue((ROOT / test).is_file(), test)
 
     def test_workflow_dispatches_one_publication_for_successful_updates(self):
         self.assertIn("GH_TOKEN: ${{ github.token }}", WORKFLOW)

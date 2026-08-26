@@ -10,13 +10,20 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "update-packages.sh"
-PACKAGE_ORIGINS = (
-    ("gnupg", "scripts/update-gnupg.py", "packages/gnupg/APKBUILD"),
-    ("zerostack", "scripts/update-zerostack.py", "packages/zerostack/APKBUILD"),
-    ("tirith", "scripts/update-tirith.py", "packages/tirith/APKBUILD"),
-    ("ports-box", "scripts/update-ports-box.py", "packages/ports-box/APKBUILD"),
-    ("orbien", "scripts/update-orbien.py", "packages/orbien/APKBUILD"),
-    ("realm", "scripts/update-realm.py", "packages/realm/APKBUILD"),
+MANIFEST = ROOT / "packages" / "updaters"
+
+
+def read_manifest():
+    return tuple(
+        tuple(line.split("|"))
+        for line in MANIFEST.read_text().splitlines()
+        if line and not line.startswith("#")
+    )
+
+
+PACKAGE_ORIGINS = read_manifest()
+UPDATER_ORIGINS = tuple(
+    entry for entry in PACKAGE_ORIGINS if entry[1] != "-"
 )
 
 
@@ -30,7 +37,7 @@ class UpdatePackagesTest(unittest.TestCase):
             text=True,
         )
 
-    def create_checkout(self):
+    def create_checkout(self, entries=PACKAGE_ORIGINS):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         root = pathlib.Path(directory.name)
@@ -39,14 +46,20 @@ class UpdatePackagesTest(unittest.TestCase):
         shutil.copy(SCRIPT, root / "scripts/update-packages.sh")
         mode = (root / "scripts/update-packages.sh").stat().st_mode
         (root / "scripts/update-packages.sh").chmod(mode | stat.S_IXUSR)
+        (root / "packages/updaters").write_text(
+            "# package-origin|updater|updater-test\n"
+            + "".join("|".join(entry) + "\n" for entry in entries)
+        )
         (root / "README").write_text("initial\n")
 
-        for package_origin, updater, apkbuild in PACKAGE_ORIGINS:
-            apkbuild_path = root / apkbuild
+        for package_origin, updater, test in entries:
+            apkbuild_path = root / "packages" / package_origin / "APKBUILD"
             apkbuild_path.parent.mkdir(parents=True)
             apkbuild_path.write_text(
                 f"pkgname={package_origin}\npkgver=1.0.0\npkgrel=0\n"
             )
+            if updater == "-":
+                continue
             updater_path = root / updater
             updater_path.parent.mkdir(parents=True, exist_ok=True)
             updater_path.write_text(
@@ -66,12 +79,15 @@ if package_origin in updated:
     print("2.0.0")
 """
             )
+            test_path = root / test
+            test_path.parent.mkdir(parents=True, exist_ok=True)
+            test_path.write_text("# updater behavior test registration\n")
 
         self.git(root, "init", "-q", "-b", "main")
         self.git(root, "config", "user.name", "test")
         self.git(root, "config", "user.email", "test@example.com")
         self.git(root, "config", "commit.gpgsign", "false")
-        self.git(root, "add", "README", "packages", "scripts")
+        self.git(root, "add", "README", "packages", "scripts", "tests")
         self.git(root, "commit", "-q", "-m", "initial")
 
         remote = root / "remote.git"
@@ -114,7 +130,7 @@ fi
         if env:
             merged_env.update(env)
         return subprocess.run(
-            ["sh", "scripts/update-packages.sh"],
+            ["sh", "scripts/update-packages.sh", "packages/updaters"],
             cwd=root,
             env=merged_env,
             capture_output=True,
@@ -137,6 +153,45 @@ fi
         )
         self.assertFalse((root / "gh-invocations").exists())
 
+    def test_origin_without_updater_is_explicitly_skipped(self):
+        entries = (*PACKAGE_ORIGINS, ("manual", "-", "-"))
+        root, _ = self.create_checkout(entries)
+
+        completed = self.run_updater(root)
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("manual has no updater; skipping", completed.stdout)
+        self.assertEqual(
+            (root / "invocations.log").read_text().splitlines(),
+            [origin for origin, _, _ in UPDATER_ORIGINS],
+        )
+
+    def test_unregistered_package_origin_fails_before_updates_run(self):
+        root, _ = self.create_checkout()
+        missing = root / "packages/manual/APKBUILD"
+        missing.parent.mkdir()
+        missing.write_text("pkgname=manual\npkgver=1.0.0\npkgrel=0\n")
+
+        completed = self.run_updater(root)
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("manual is missing from updater manifest", completed.stderr)
+        self.assertFalse((root / "invocations.log").exists())
+
+    def test_updater_without_test_registration_fails_before_updates_run(self):
+        entries = list(PACKAGE_ORIGINS)
+        origin, updater, _ = entries[0]
+        entries[0] = (origin, updater, "-")
+        root, _ = self.create_checkout(tuple(entries))
+
+        completed = self.run_updater(root)
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            f"{origin} updater has no test registration", completed.stderr
+        )
+        self.assertFalse((root / "invocations.log").exists())
+
     def test_failed_package_origin_does_not_block_or_leak_into_later_origins(self):
         root, _ = self.create_checkout()
         initial_commit = self.git(root, "rev-parse", "HEAD").stdout.strip()
@@ -148,7 +203,7 @@ fi
         self.assertEqual(completed.returncode, 1, completed.stderr)
         self.assertEqual(
             (root / "invocations.log").read_text().splitlines(),
-            [package_origin for package_origin, _, _ in PACKAGE_ORIGINS],
+            [package_origin for package_origin, _, _ in UPDATER_ORIGINS],
         )
         self.assertIn("pkgver=1.0.0", self.remote_file(root, "packages/gnupg/APKBUILD"))
         self.assertIn(
@@ -227,7 +282,7 @@ exec "$REAL_GIT" "$@"
         self.assertEqual(completed.returncode, 1, completed.stderr)
         self.assertEqual(
             (root / "invocations.log").read_text().splitlines(),
-            [package_origin for package_origin, _, _ in PACKAGE_ORIGINS],
+            [package_origin for package_origin, _, _ in UPDATER_ORIGINS],
         )
         self.assertIn("pkgver=1.0.0", self.remote_file(root, "packages/gnupg/APKBUILD"))
         self.assertIn(
