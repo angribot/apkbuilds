@@ -53,10 +53,7 @@ for arch in x86_64 aarch64; do
     origin=${family##*/}
     stage='candidate-validation'
     assert_origin_directory "$workspace/packages/$origin"
-    declared=$(apkbuild_field pkgver \
-      "$workspace/packages/$origin/APKBUILD")-r$(
-      apkbuild_field pkgrel "$workspace/packages/$origin/APKBUILD"
-    )
+    declared=$(apkbuild_declared_build "$workspace/packages/$origin")
     candidate_index="$work/$origin-APKINDEX.tar.gz"
     # Candidates carry the untrusted build key's signature; only their
     # structure is validated here, never their authenticity. The repository

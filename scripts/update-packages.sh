@@ -106,7 +106,8 @@ discard_uncommitted_update() {
 push_commit() {
   _pc_package_origin="$1"
 
-  for _pc_attempt in 1 2 3; do
+  _pc_attempt=1
+  while [ "$_pc_attempt" -le "$PUSH_ATTEMPTS" ]; do
     if git push origin HEAD:main; then
       return 0
     fi
@@ -114,6 +115,7 @@ push_commit() {
     echo "$_pc_package_origin push attempt $_pc_attempt did not reach main; fetching origin/main"
     if ! git fetch origin main; then
       echo "$_pc_package_origin could not fetch origin/main after push failure" >&2
+      _pc_attempt=$((_pc_attempt + 1))
       continue
     fi
 
@@ -132,6 +134,7 @@ push_commit() {
         return 1
       fi
     fi
+    _pc_attempt=$((_pc_attempt + 1))
   done
 
   echo "$_pc_package_origin push failed after $PUSH_ATTEMPTS attempts" >&2

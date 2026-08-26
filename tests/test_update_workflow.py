@@ -85,7 +85,10 @@ class PackageUpdateTest(unittest.TestCase):
         self.assertNotIn("--force", UPDATER)
 
     def test_workflow_retries_stale_pushes_with_a_bound(self):
-        self.assertIn("for _pc_attempt in 1 2 3", UPDATER)
+        self.assertIn("PUSH_ATTEMPTS=3", UPDATER)
+        self.assertIn(
+            'while [ "$_pc_attempt" -le "$PUSH_ATTEMPTS" ]', UPDATER
+        )
         self.assertIn("git fetch origin main", UPDATER)
         self.assertIn("git rebase origin/main", UPDATER)
         self.assertIn("git push origin HEAD:main", UPDATER)
