@@ -12,6 +12,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKFLOW = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
 MERGER_PATH = ROOT / "scripts" / "merge-package-families.sh"
 MERGER = MERGER_PATH.read_text()
+BUILD_MODULE = (ROOT / "scripts" / "build-package-family.sh").read_text()
+VERIFY_MODULE = (ROOT / "scripts" / "verify-repository.sh").read_text()
 
 
 class PackageOriginBuildTest(unittest.TestCase):
@@ -94,12 +96,12 @@ class PackageOriginBuildTest(unittest.TestCase):
 
     def test_build_mismatch_logs_source_and_build_identities(self):
         self.assertIn(
-            '-e SOURCE_REVISION="${{ inputs.revision || github.sha }}"', WORKFLOW
+            '--source-revision "${{ inputs.revision || github.sha }}"', WORKFLOW
         )
-        self.assertIn("source revision=", WORKFLOW)
-        self.assertIn("declared build=", WORKFLOW)
-        self.assertIn("published build(s)=", WORKFLOW)
-        self.assertIn("package set mismatch:", WORKFLOW)
+        self.assertIn("source revision=", BUILD_MODULE)
+        self.assertIn("declared build=", BUILD_MODULE)
+        self.assertIn("published build(s)=", BUILD_MODULE)
+        self.assertIn("package set mismatch:", BUILD_MODULE)
 
     def test_workflow_exposes_a_stable_branch_protection_gate(self):
         gate_start = WORKFLOW.index("\n  gate:")
@@ -135,13 +137,14 @@ class PackageOriginBuildTest(unittest.TestCase):
         sign_start = WORKFLOW.index("\n  sign:", build_start)
         build = WORKFLOW[build_start:sign_start]
         self.assertIn('-v "$GITHUB_WORKSPACE:/workspace:ro"', build)
-        self.assertIn('cp -R "/workspace/packages/$ORIGIN" /new/source/', build)
+        self.assertIn('build-package-family.sh', build)
+        self.assertIn('cp -R "$workspace/packages/$origin" "$output/source/"', BUILD_MODULE)
         self.assertIn(
-            "sh scripts/prepare-builder.sh \\\n                /new /var/cache/distfiles /home/builder/.cache/cargo \\\n                /home/builder/.cache/ccache /home/builder/.cache/sccache \\\n                \"/new/source/$ORIGIN\"",
-            build,
+            'sh "$workspace/scripts/prepare-builder.sh" \\\n  "$output" "$distfiles" "$cargo_home" "$ccache_dir" "$sccache_dir"',
+            BUILD_MODULE,
         )
-        self.assertIn('cd /new/source/$ORIGIN && CARGO_HOME=', build)
-        self.assertIn('REPODEST=', build)
+        self.assertIn('cd $output/source/$origin && CARGO_HOME=', BUILD_MODULE)
+        self.assertIn('REPODEST=', BUILD_MODULE)
         self.assertNotIn("prepare-builder.sh /new /workspace", build)
 
     def test_builder_setup_documents_writable_directory_boundary(self):
@@ -180,41 +183,41 @@ class PackageOriginBuildTest(unittest.TestCase):
 
     def test_build_reports_compiler_cache_and_timing_metrics(self):
         self.assertIn("CI_TOOLCHAIN: alpine-edge-rust-v1", WORKFLOW)
-        self.assertIn("RUSTC_WRAPPER=sccache", WORKFLOW)
-        self.assertIn("ccache --show-stats", WORKFLOW)
-        self.assertIn("sccache --show-stats", WORKFLOW)
-        self.assertIn("build_seconds=", WORKFLOW)
-        self.assertIn("du -sb", WORKFLOW)
+        self.assertIn("RUSTC_WRAPPER=sccache", BUILD_MODULE)
+        self.assertIn("ccache --show-stats", BUILD_MODULE)
+        self.assertIn("sccache --show-stats", BUILD_MODULE)
+        self.assertIn("build_seconds=", BUILD_MODULE)
+        self.assertIn("du -sb", BUILD_MODULE)
         self.assertIn("GITHUB_STEP_SUMMARY", WORKFLOW)
         self.assertIn(
             "cargo build", (ROOT / "packages/orbien/APKBUILD").read_text()
         )
 
     def test_build_uses_complete_declared_and_published_families(self):
-        self.assertIn("abuild listpkg", WORKFLOW)
-        self.assertIn("apkindex_origin_apks", WORKFLOW)
-        self.assertIn("package_sets_equal", WORKFLOW)
-        self.assertIn("apkindex_origin_versions", WORKFLOW)
-        self.assertNotIn("apkbuild_pinned_apk", WORKFLOW)
+        self.assertIn("abuild listpkg", BUILD_MODULE)
+        self.assertIn("apkindex_origin_apks", BUILD_MODULE)
+        self.assertIn("package_sets_equal", BUILD_MODULE)
+        self.assertIn("apkindex_origin_versions", BUILD_MODULE)
+        self.assertNotIn("apkbuild_pinned_apk", BUILD_MODULE)
 
     def test_exact_published_family_is_verified_before_skip(self):
-        comparison = WORKFLOW.index('package_sets_equal "$expected" "$published"')
-        skip = WORKFLOW.index("package family already published", comparison)
-        physical_verification = WORKFLOW.index('apk verify "$downloaded"', comparison)
+        comparison = BUILD_MODULE.index('package_sets_equal "$expected" "$published_packages"')
+        skip = BUILD_MODULE.index("package family already published", comparison)
+        physical_verification = BUILD_MODULE.index('apk verify "$downloaded"', comparison)
         self.assertLess(comparison, physical_verification)
         self.assertLess(physical_verification, skip)
 
     def test_each_candidate_family_has_isolated_artifact_directory(self):
-        self.assertIn('/new/$ORIGIN/packages/$ARCH', WORKFLOW)
-        self.assertIn('/new/built/$ARCH/$ORIGIN', WORKFLOW)
+        self.assertIn('$output/$origin/packages/$arch', BUILD_MODULE)
+        self.assertIn('$output/built/$arch/$origin', BUILD_MODULE)
         self.assertIn("path: ${{ runner.temp }}/new/built/", WORKFLOW)
         self.assertIn("merge-multiple: true", WORKFLOW)
         self.assertIn('source="$built/$arch"', MERGER)
 
     def test_orbien_client_is_smoke_tested_after_install(self):
-        installation = WORKFLOW.index('"$@"')
-        smoke_test = WORKFLOW.index("scripts/test-orbien.sh", installation)
-        staging = WORKFLOW.index('candidate="/new/built/$ARCH/$ORIGIN"', installation)
+        installation = BUILD_MODULE.index('"$@"')
+        smoke_test = BUILD_MODULE.index("test-orbien.sh", installation)
+        staging = BUILD_MODULE.index('candidate="$output/built/$arch/$origin"', installation)
         self.assertLess(installation, smoke_test)
         self.assertLess(smoke_test, staging)
 
@@ -258,10 +261,10 @@ class PackageOriginReplacementTest(unittest.TestCase):
         self.assertLess(extraction, family_lookup)
 
     def test_unsupported_architecture_has_no_replacement_candidate(self):
-        support_check = WORKFLOW.index('supports_arch "$ARCH"')
-        candidate_directory = WORKFLOW.index('/new/built/$ARCH/$ORIGIN')
+        support_check = BUILD_MODULE.index('supports_arch "$arch"')
+        candidate_directory = BUILD_MODULE.index('/built/$arch/$origin')
         self.assertLess(support_check, candidate_directory)
-        self.assertIn('supports_arch "$ARCH" "packages/$ORIGIN/APKBUILD" || exit 0', WORKFLOW)
+        self.assertIn('supports_arch "$arch" "$workspace/packages/$origin/APKBUILD" || exit 0', BUILD_MODULE)
 
     def test_every_architecture_baseline_is_verified_during_publication(self):
         source_guard = MERGER.index('if ! test -d "$source"')
@@ -271,19 +274,18 @@ class PackageOriginReplacementTest(unittest.TestCase):
         self.assertLess(baseline_verification, source_guard)
 
     def test_final_signed_snapshot_matches_its_physical_apks(self):
-        verification_step = WORKFLOW.index(
-            "- name: Verify the APK repository without the private key"
-        )
-        verification_script = WORKFLOW[verification_step:]
-        self.assertIn("apkindex_apks", verification_script)
-        self.assertIn("package_sets_equal", verification_script)
+        self.assertIn("apkindex_apks", VERIFY_MODULE)
+        self.assertIn("package_sets_equal", VERIFY_MODULE)
+        self.assertIn("apk verify", VERIFY_MODULE)
 
     def test_verification_retries_index_updates_but_not_resolver_failures(self):
         verify_start = WORKFLOW.index("  verify:")
         publish_start = WORKFLOW.index("\n  publish:", verify_start)
         verify = WORKFLOW[verify_start:publish_start]
-        self.assertIn("apk_update_with_retry", verify)
-        self.assertIn("apk_add_pinned_origin", verify)
+        self.assertIn("verify-repository.sh", verify)
+        self.assertIn("--install-declared-builds", verify)
+        self.assertIn("apk_update_with_retry", VERIFY_MODULE)
+        self.assertIn("apk_add_pinned_origin", VERIFY_MODULE)
         self.assertNotIn("for delay in", verify)
         self.assertIn("package-origin=", (ROOT / "scripts" / "lib.sh").read_text())
 
@@ -297,7 +299,8 @@ class PackageOriginReplacementTest(unittest.TestCase):
         staged_verification = WORKFLOW[verify_job:publish_job]
         self.assertIn("if: needs.sign.outputs.snapshot_created == 'true'", staged_verification)
         self.assertNotIn("continue-on-error", staged_verification)
-        self.assertIn('echo "/pages/edge"', staged_verification)
+        self.assertIn("verify-repository.sh", staged_verification)
+        self.assertIn("--install-declared-builds", staged_verification)
         self.assertNotIn("PAGES_URL", staged_verification)
 
 

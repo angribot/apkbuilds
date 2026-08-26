@@ -147,24 +147,16 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           ORIGIN: ${{ matrix.origin }}
-          BRANCH: ${{ github.ref_name }}
         run: |
           mkdir -p "$RUNNER_TEMP/new"
           mkdir -p .cache/distfiles \
             .cache/cargo-${{ matrix.origin }} \
             .cache/ccache-${{ matrix.origin }} \
             .cache/sccache-${{ matrix.origin }}
-          # An ephemeral key signs these packages: this job runs upstream
-          # build scripts, so it must never see the repository signing key.
+          # The build module owns all network-capable and untrusted build work.
           docker run --rm \
             -e ARCH \
             -e ORIGIN \
-            -e BRANCH \
-            -e PUBLISHED="$PAGES_URL/edge/${{ matrix.arch }}" \
-            -e SOURCE_REVISION="${{ inputs.revision || github.sha }}" \
-            -e CARGO_HOME=/home/builder/.cache/cargo \
-            -e SCCACHE_DIR=/home/builder/.cache/sccache \
-            -e RUSTC_WRAPPER=sccache \
             -v "$GITHUB_WORKSPACE:/workspace:ro" \
             -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \
             -v "$RUNNER_TEMP/new:/new" \
@@ -173,138 +165,19 @@ jobs:
             -v "$GITHUB_WORKSPACE/.cache/ccache-${{ matrix.origin }}:/home/builder/.cache/ccache" \
             -v "$GITHUB_WORKSPACE/.cache/sccache-${{ matrix.origin }}:/home/builder/.cache/sccache" \
             -w /workspace \
-            alpine:edge sh -euxc '
-              mkdir -p /new/source
-              cp -R "/workspace/packages/$ORIGIN" /new/source/
-              sh scripts/prepare-builder.sh \
-                /new /var/cache/distfiles /home/builder/.cache/cargo \
-                /home/builder/.cache/ccache /home/builder/.cache/sccache \
-                "/new/source/$ORIGIN"
-              . scripts/lib.sh
-
-              # Published package families are trusted only after their index
-              # is verified with the repository signing key.
-              cp /keys/apkbuilds.rsa.pub /etc/apk/keys/
-              mkdir -p /tmp/published
-              wget -q -T 15 -t 2 \
-                -O /tmp/published/APKINDEX.tar.gz \
-                "$PUBLISHED/APKINDEX.tar.gz"
-              apk verify /tmp/published/APKINDEX.tar.gz
-              tar -xOzf /tmp/published/APKINDEX.tar.gz APKINDEX \
-                > /tmp/published/APKINDEX
-
-              su builder -c "abuild-keygen -a -n"
-              cp /home/builder/.config/abuild/*.rsa.pub /etc/apk/keys/
-
-              supports_arch "$ARCH" "packages/$ORIGIN/APKBUILD" || exit 0
-              assert_origin_directory "packages/$ORIGIN"
-              expected="/tmp/expected-$ORIGIN"
-              published="/tmp/published-$ORIGIN"
-              su builder -c \
-                "cd /new/source/$ORIGIN && abuild listpkg" \
-                > "$expected"
-              apkindex_origin_apks \
-                /tmp/published/APKINDEX "$ORIGIN" > "$published"
-              declared=$(apkbuild_field pkgver "packages/$ORIGIN/APKBUILD")-r$(
-                apkbuild_field pkgrel "packages/$ORIGIN/APKBUILD"
-              )
-              versions="/tmp/published-versions-$ORIGIN"
-              apkindex_origin_versions \
-                /tmp/published/APKINDEX "$ORIGIN" > "$versions"
-              published_builds=
-              while IFS= read -r version; do
-                [ -n "$published_builds" ] && published_builds="$published_builds "
-                published_builds="$published_builds$version"
-              done < "$versions"
-              [ -n "$published_builds" ] || published_builds='<none>'
-              if ! package_sets_equal "$expected" "$published"; then
-                printf "::notice::%s package set mismatch: source revision=%s declared build=%s published build(s)=%s\n" \
-                  "$ORIGIN" "$SOURCE_REVISION" "$declared" "$published_builds"
-              fi
-              if package_sets_equal "$expected" "$published"; then
-                published_apks="/tmp/published/$ORIGIN"
-                mkdir -p "$published_apks"
-                while IFS= read -r package; do
-                  downloaded="$published_apks/$package"
-                  wget -q -T 15 -t 2 -O "$downloaded" \
-                    "$PUBLISHED/$package"
-                  apk verify "$downloaded"
-                done < "$expected"
-                printf "==> %s package family already published: source revision=%s declared build=%s published build(s)=%s\n" \
-                  "$ORIGIN" "$SOURCE_REVISION" "$declared" "$published_builds"
-                exit 0
-              fi
-
-              if grep -Fx "$declared" "$versions" >/dev/null; then
-                printf "::error::%s build mismatch: source revision=%s declared build=%s published build(s)=%s\n" \
-                  "$ORIGIN" "$SOURCE_REVISION" "$declared" "$published_builds" >&2
-                printf "%s %s already published with a different package set\n" \
-                  "$ORIGIN" "$declared" >&2
-                exit 1
-              fi
-
-              build_started=$(date +%s)
-              if ! su builder -c \
-                "cd /new/source/$ORIGIN && CARGO_HOME=\"$CARGO_HOME\" SCCACHE_DIR=\"$SCCACHE_DIR\" RUSTC_WRAPPER=\"$RUSTC_WRAPPER\" REPODEST=\"/new/$ORIGIN\" abuild -r"; then
-                printf "::error::build stage=compile arch=%s package-origin=%s declared-build=%s published-build(s)=%s\\n" \
-                  "$ARCH" "$ORIGIN" "$declared" "$published_builds" >&2
-                exit 1
-              fi
-              build_seconds=$(( $(date +%s) - build_started ))
-              built="/new/$ORIGIN/packages/$ARCH"
-              actual="/tmp/actual-$ORIGIN"
-              find "$built" -maxdepth 1 -type f -name "*.apk" \
-                -exec basename {} \; > "$actual"
-              if ! package_sets_equal "$expected" "$actual"; then
-                printf "%s build produced an incomplete package family\n" \
-                  "$ORIGIN" >&2
-                diff -u "$expected" "$actual" >&2 || true
-                exit 1
-              fi
-
-              # Installation and package-specific smoke tests happen before
-              # this family becomes a publication candidate.
-              set -- apk add --allow-untrusted --repository "$built"
-              for package in "$built"/*.apk; do set -- "$@" "$package"; done
-              "$@"
-              if [ "$ORIGIN" = gnupg ]; then
-                scripts/test-package.sh \
-                  "$(apkbuild_field pkgver packages/gnupg/APKBUILD)"
-              fi
-              if [ "$ORIGIN" = orbien ]; then
-                scripts/test-orbien.sh
-              fi
-              if [ "$ORIGIN" = ports-box ]; then
-                scripts/test-ports-box-service.sh
-              fi
-              if [ "$ORIGIN" = realm ]; then
-                scripts/test-realm-service.sh
-              fi
-              if [ "$ORIGIN" = tirith ]; then
-                scripts/test-tirith.sh \
-                  "$(apkbuild_field pkgver packages/tirith/APKBUILD)"
-              fi
-              candidate="/new/built/$ARCH/$ORIGIN"
-              mkdir -p "$candidate"
-              cp "$built"/*.apk "$candidate/"
-              metrics="/new/metrics/$ARCH/$ORIGIN"
-              mkdir -p "$metrics"
-              {
-                printf "origin=%s\\n" "$ORIGIN"
-                printf "arch=%s\\n" "$ARCH"
-                printf "declared_build=%s\\n" "$declared"
-                printf "published_builds=%s\\n" "$published_builds"
-                printf "build_seconds=%s\\n" "$build_seconds"
-                set -- $(du -sb /home/builder/.cache/ccache)
-                printf "ccache_size_bytes=%s\\n" "$1"
-                set -- $(du -sb /home/builder/.cache/sccache)
-                printf "sccache_size_bytes=%s\\n" "$1"
-                printf "%s\\n" "ccache_stats_begin"
-                su builder -c "ccache --show-stats" 2>&1 || true
-                printf "%s\\n" "sccache_stats_begin"
-                su builder -c "sccache --show-stats" 2>&1 || true
-              } > "$metrics/build.txt"
-            '
+            alpine:edge \
+              /workspace/scripts/build-package-family.sh \
+                --arch "$ARCH" \
+                --origin "$ORIGIN" \
+                --published "$PAGES_URL/edge/${{ matrix.arch }}" \
+                --source-revision "${{ inputs.revision || github.sha }}" \
+                --workspace /workspace \
+                --output /new \
+                --repository-key /keys/apkbuilds.rsa.pub \
+                --distfiles /var/cache/distfiles \
+                --cargo-home /home/builder/.cache/cargo \
+                --ccache-dir /home/builder/.cache/ccache \
+                --sccache-dir /home/builder/.cache/sccache
       - name: Report compiler cache metrics
         env:
           CACHE_HIT: ${{ steps.ccache.outputs.cache-hit }}
@@ -419,51 +292,21 @@ jobs:
         env:
           ABUILD_PRIVATE_KEY: ${{ secrets.ABUILD_PRIVATE_KEY }}
         run: |
-          # --network none keeps the repository signing key away from anything
-          # that could exfiltrate it. Signing is architecture-independent, so
-          # one runner signs both trees.
+          # The private key is mounted only into the network-isolated signer.
+          private_key="$RUNNER_TEMP/repository-signing-key"
+          printf '%s\n' "$ABUILD_PRIVATE_KEY" > "$private_key"
+          chmod 600 "$private_key"
+          trap 'rm -f "$private_key"' EXIT
           docker run --rm --network none \
-            -e ABUILD_PRIVATE_KEY \
             -v "$RUNNER_TEMP/pages:/pages" \
+            -v "$private_key:/private-key:ro" \
             -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \
-            apkbuilds-signer sh -euxc '
-              umask 077
-              set +x
-              printf "%s\n" "$ABUILD_PRIVATE_KEY" > /tmp/apkbuilds.rsa
-              unset ABUILD_PRIVATE_KEY
-              set -x
-              trap "rm -f /tmp/apkbuilds.rsa" EXIT
-              cp /keys/apkbuilds.rsa.pub /etc/apk/keys/
-              for arch in x86_64 aarch64; do
-                apk_repository="/pages/edge/$arch"
-                test -d "$apk_repository" || continue
-                for package in "$apk_repository"/*.apk; do
-                  # Already-published packages carry a valid signature.
-                  apk verify "$package" && continue
-                  work=$(mktemp -d)
-                  (
-                    cd "$work"
-                    abuild-gzsplit < "$package"
-                    abuild-sign -q -t RSA256 \
-                      -k /tmp/apkbuilds.rsa \
-                      -p /keys/apkbuilds.rsa.pub \
-                      control.tar.gz
-                    cat control.tar.gz data.tar.gz > "$package"
-                  )
-                  rm -rf "$work"
-                done
-                cd "$apk_repository"
-                rm -f APKINDEX.tar.gz Packages.adb
-                apk index --no-warnings --quiet \
-                  --output APKINDEX.tar.gz \
-                  --rewrite-arch "$arch" \
-                  ./*.apk
-                abuild-sign -q -t RSA256 \
-                  -k /tmp/apkbuilds.rsa \
-                  -p /keys/apkbuilds.rsa.pub \
-                  APKINDEX.tar.gz
-              done
-            '
+            -v "$GITHUB_WORKSPACE/scripts/sign-repository.sh:/sign-repository.sh:ro" \
+            apkbuilds-signer \
+              /sign-repository.sh \
+                --pages /pages \
+                --repository-key /keys/apkbuilds.rsa.pub \
+                --private-key-file /private-key
       - name: Verify the APK repository without the private key
         if: >-
           steps.merge.outputs.merged == 'true' ||
@@ -471,26 +314,14 @@ jobs:
         run: |
           docker run --rm --network none \
             -v "$RUNNER_TEMP/pages:/pages:ro" \
-            -v "$GITHUB_WORKSPACE/scripts/lib.sh:/scripts/lib.sh:ro" \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
             -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \
-            alpine:edge sh -euxc '
-              . /scripts/lib.sh
-              cp /keys/apkbuilds.rsa.pub /etc/apk/keys/
-              for arch in x86_64 aarch64; do
-                apk_repository="/pages/edge/$arch"
-                test -d "$apk_repository" || continue
-                apk verify "$apk_repository/APKINDEX.tar.gz"
-                apk verify "$apk_repository"/*.apk
-                work=$(mktemp -d)
-                tar -xOzf "$apk_repository/APKINDEX.tar.gz" APKINDEX \
-                  > "$work/APKINDEX"
-                apkindex_apks "$work/APKINDEX" > "$work/indexed"
-                find "$apk_repository" -maxdepth 1 -type f -name "*.apk" \
-                  -exec basename {} \; > "$work/physical"
-                package_sets_equal "$work/indexed" "$work/physical"
-                rm -rf "$work"
-              done
-            '
+            alpine:edge \
+              /workspace/scripts/verify-repository.sh \
+                --pages /pages \
+                --workspace /workspace \
+                --arch all \
+                --repository-key /keys/apkbuilds.rsa.pub
       - name: Mark snapshot for verification
         id: snapshot
         if: >-
@@ -535,49 +366,18 @@ jobs:
           path: ${{ runner.temp }}/pages
       - name: Install every declared build from the staged snapshot
         run: |
-          docker run --rm \
+          docker run --rm --network none \
             -v "$RUNNER_TEMP/pages:/pages:ro" \
             -v "$GITHUB_WORKSPACE:/workspace:ro" \
-            -w /workspace \
-            alpine:edge sh -euxc '
-              . scripts/lib.sh
-              cp /pages/apkbuilds.rsa.pub \
-                /etc/apk/keys/apkbuilds.rsa.pub
-              echo "/pages/edge" >> /etc/apk/repositories
-              apk_repository="/pages/edge/${{ matrix.arch }}"
-              index=/tmp/APKINDEX
-              tar -xOzf "$apk_repository/APKINDEX.tar.gz" APKINDEX \
-                > "$index"
-              apkindex_apks "$index" > /tmp/indexed
-              find "$apk_repository" -maxdepth 1 -type f -name "*.apk" \
-                -exec basename {} \; > /tmp/physical
-              package_sets_equal /tmp/indexed /tmp/physical
-              if ! apk_update_with_retry; then
-                printf "::error::verify stage=index arch=%s package-origin=all declared-builds=all published-builds=unknown\\n" \
-                  "${{ matrix.arch }}" >&2
-                exit 1
-              fi
-              for origin in $(all_origins); do
-                supports_arch "${{ matrix.arch }}" \
-                  "packages/$origin/APKBUILD" || continue
-                declared=$(apkbuild_field pkgver \
-                  "packages/$origin/APKBUILD")-r$(
-                  apkbuild_field pkgrel "packages/$origin/APKBUILD"
-                )
-                versions="/tmp/published-versions-$origin"
-                apkindex_origin_versions "$index" "$origin" > "$versions"
-                published_builds=
-                while IFS= read -r version; do
-                  [ -n "$published_builds" ] && published_builds="$published_builds "
-                  published_builds="$published_builds$version"
-                done < "$versions"
-                [ -n "$published_builds" ] || published_builds='<none>'
-                spec=$(apkbuild_pinned_spec "packages/$origin")
-                apk_add_pinned_origin \
-                  "${{ matrix.arch }}" "$origin" "$declared" \
-                  "$published_builds" "$spec" || exit 1
-              done
-            '
+            -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \
+            alpine:edge \
+              /workspace/scripts/verify-repository.sh \
+                --pages /pages \
+                --workspace /workspace \
+                --arch "${{ matrix.arch }}" \
+                --repository-key /keys/apkbuilds.rsa.pub \
+                --install-declared-builds
+
 
   publish:
     needs: verify
