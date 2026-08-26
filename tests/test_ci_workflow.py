@@ -27,10 +27,12 @@ class PackageOriginBuildTest(unittest.TestCase):
     def test_manual_dispatch_plans_the_selected_revision(self):
         self.assertIn("revision:", WORKFLOW)
         self.assertIn("base_revision:", WORKFLOW)
+        self.assertIn("origins:", WORKFLOW)
         self.assertEqual(WORKFLOW.count("ref: ${{ inputs.revision || github.sha }}"), 4)
         check = WORKFLOW[WORKFLOW.index("  check:") : WORKFLOW.index("\n  build:")]
         self.assertIn("REVISION: ${{ inputs.revision || github.sha }}", check)
         self.assertIn("BASE_REVISION: ${{ inputs.base_revision }}", check)
+        self.assertIn("SELECTED_ORIGINS: ${{ inputs.origins }}", check)
         self.assertIn(
             "EXPLICIT_REVISION: ${{ inputs.revision != '' && 'true' || 'false' }}",
             check,

@@ -18,6 +18,10 @@ on:
         description: 'Base main commit for incremental planning'
         type: string
         default: ''
+      origins:
+        description: 'Space-separated package origins to build at the selected revision'
+        type: string
+        default: ''
   schedule:
     # Reconcile the published snapshot daily, even when no updater changed main.
     - cron: '0 0 * * *'
@@ -103,6 +107,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
           REVISION: ${{ inputs.revision || github.sha }}
           BASE_REVISION: ${{ inputs.base_revision }}
+          SELECTED_ORIGINS: ${{ inputs.origins }}
           EXPLICIT_REVISION: ${{ inputs.revision != '' && 'true' || 'false' }}
           MAIN_REVISION: origin/${{ github.event.repository.default_branch }}
         run: sh scripts/plan-origins.sh

@@ -77,7 +77,16 @@ class PlanOriginsTest(unittest.TestCase):
         self.git(self.root, "commit", "-q", "-m", message)
 
     def run_plan(
-        self, *, revision, base_revision="", full="false", explicit_revision="true"
+        self,
+        *,
+        revision,
+        base_revision="",
+        full="false",
+        explicit_revision="true",
+        selected_origins="",
+        event="workflow_dispatch",
+        base="",
+        before="",
     ):
         output = self.root / "output"
         runner_temp = self.root / "runner-temp"
@@ -85,14 +94,15 @@ class PlanOriginsTest(unittest.TestCase):
         env = os.environ.copy()
         env.update(
             {
-                "EVENT": "workflow_dispatch",
+                "EVENT": event,
                 "FULL": full,
-                "BASE": "",
-                "BEFORE": "",
+                "BASE": base,
+                "BEFORE": before,
                 "REVISION": revision,
                 "BASE_REVISION": base_revision,
                 "EXPLICIT_REVISION": explicit_revision,
                 "MAIN_REVISION": "main",
+                "SELECTED_ORIGINS": selected_origins,
                 "RUNNER_TEMP": str(runner_temp),
                 "GITHUB_OUTPUT": str(output),
             }
@@ -220,6 +230,86 @@ class PlanOriginsTest(unittest.TestCase):
 
         self.assertNotEqual(completed.returncode, 0)
         self.assertIn("not an ancestor", completed.stderr)
+
+    def test_revision_selection_rejects_a_deleted_package_origin(self):
+        self.git(self.root, "rm", "-q", "-r", "packages/alpha")
+        self.git(self.root, "commit", "-q", "-m", "delete alpha")
+        deleted_commit = self.git(
+            self.root, "rev-parse", "HEAD"
+        ).stdout.strip()
+
+        completed = self.run_plan(revision=deleted_commit)
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "selected package origin alpha has no APKBUILD", completed.stderr
+        )
+        self.assertFalse((self.root / "output").exists())
+
+    def test_range_selection_rejects_a_renamed_package_origin(self):
+        self.git(self.root, "mv", "packages/alpha", "packages/gamma")
+        self.write_apkbuild("gamma", "3.0.0")
+        self.git(self.root, "add", "packages/gamma/APKBUILD")
+        self.git(self.root, "commit", "-q", "-m", "rename alpha to gamma")
+        renamed_commit = self.git(
+            self.root, "rev-parse", "HEAD"
+        ).stdout.strip()
+
+        completed = self.run_plan(
+            revision=renamed_commit,
+            base_revision=self.rename_commit,
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "selected package origin alpha has no APKBUILD", completed.stderr
+        )
+        self.assertFalse((self.root / "output").exists())
+
+    def test_manual_selection_rejects_a_nonexistent_package_origin(self):
+        completed = self.run_plan(
+            revision=self.rename_commit,
+            selected_origins="missing",
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "selected package origin missing has no APKBUILD", completed.stderr
+        )
+        self.assertFalse((self.root / "output").exists())
+
+    def test_manual_selection_preserves_valid_package_origin_selection(self):
+        completed = self.run_plan(
+            revision=self.rename_commit,
+            selected_origins="alpha",
+        )
+
+        outputs = self.plan_outputs(completed)
+        matrix = json.loads(outputs["matrix"])
+        self.assertEqual(
+            {(item["origin"], item["arch"]) for item in matrix["include"]},
+            {("alpha", "x86_64"), ("alpha", "aarch64")},
+        )
+        self.assertEqual(outputs["reconcile"], "false")
+
+    def test_pull_request_diff_rejects_a_deleted_package_origin(self):
+        self.git(self.root, "rm", "-q", "-r", "packages/alpha")
+        self.git(self.root, "commit", "-q", "-m", "delete alpha")
+        deleted_commit = self.git(
+            self.root, "rev-parse", "HEAD"
+        ).stdout.strip()
+
+        completed = self.run_plan(
+            revision=deleted_commit,
+            event="pull_request",
+            base=self.rename_commit,
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "selected package origin alpha has no APKBUILD", completed.stderr
+        )
+        self.assertFalse((self.root / "output").exists())
 
 
 if __name__ == "__main__":
