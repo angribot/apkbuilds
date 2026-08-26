@@ -11,3 +11,14 @@
 +    libc::TIOCGPGRP as u64,
 +    libc::FIONREAD as u64,
  ];
+@@ -1442,8 +1442,8 @@
+         let rules = SafeDescriptorControls.conditional_rules();
+         let ioctl_rules = rules.get(&Sysno::ioctl).expect("conditional ioctl rules");
+         assert_eq!(ioctl_rules.len(), SAFE_TERMINAL_IOCTL_REQUESTS.len());
+-        assert!(!SAFE_TERMINAL_IOCTL_REQUESTS.contains(&{ libc::TIOCSTI }));
+-        assert!(!SAFE_TERMINAL_IOCTL_REQUESTS.contains(&{ libc::TIOCLINUX }));
++        assert!(!SAFE_TERMINAL_IOCTL_REQUESTS.contains(&(libc::TIOCSTI as u64)));
++        assert!(!SAFE_TERMINAL_IOCTL_REQUESTS.contains(&(libc::TIOCLINUX as u64)));
+         for rule in ioctl_rules {
+             assert_eq!(rule.argument_filters.len(), 2);
+             assert!(rule
