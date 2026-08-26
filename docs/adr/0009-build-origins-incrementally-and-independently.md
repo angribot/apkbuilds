@@ -1,12 +1,14 @@
 # Build package origins incrementally and independently
 
 CI selects only package origins whose inputs changed since the last push to
-`main`, while full and scheduled runs reconcile all origins; every input below
-an origin must advance its declared build to preserve published-build
+`main`, while full and scheduled runs reconcile all package origins; every
+input below a package origin must advance its declared build to preserve
+published-build
 immutability (ADR-0001). Diff, range, revision, and explicit manual selections
-must resolve to valid origins before matrix expansion, validation and planning
-share one checkout and job, and compiler-cache snapshots remain scoped and
-immutable per architecture, origin, runner, and toolchain. Scheduled and manual
+must resolve to valid package origins before matrix expansion, validation and
+planning share one checkout and job, and compiler-cache snapshots remain scoped
+and immutable per architecture, package origin, runner, and toolchain. Scheduled
+and manual
 reconciliation compares every declared package family with the published
 repository snapshot; after an updater changes `main`, its publication dispatch
 has an additional bounded reconciliation attempt if the initial dispatch
