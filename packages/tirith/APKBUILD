@@ -17,6 +17,7 @@ checkdepends="bash"
 options="!strip"
 source="tirith-$pkgver.tar.gz::https://github.com/sheeki03/tirith/archive/refs/tags/v$pkgver.tar.gz
 	0001-add-apk-install-method.patch
+	0002-fix-musl-ioctl-request-types.patch
 	"
 
 prepare() {
@@ -70,4 +71,5 @@ package() {
 sha512sums="
 06ceee14b10fcccc3449d4205db71c799ea566e1a6425b4e5ff69024dce6702a56dd2251c35708dc0d89bffb96d429a86b4391c15ba12cbffb12dcb860f3aaa3  tirith-0.4.0.tar.gz
 6e54d2862043593ab1b0322e322dc28d3a639b10ebc83cf092b93a150f0ec195dc9554cacff2016690aa92fea6c9889e445e30459f523b5f82c3655f61b4273d  0001-add-apk-install-method.patch
+b5a0c9e6a18c6daa46ebb11cb8bba710c37d066206c8ddb85c901247bbf8eb7fbceea21733659968e8532812f4cb9a619a5662627ecef800bb4bfca63bc6c77f  0002-fix-musl-ioctl-request-types.patch
 "

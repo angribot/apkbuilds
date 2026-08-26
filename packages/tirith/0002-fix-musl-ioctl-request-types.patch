@@ -1,0 +1,13 @@
+--- a/crates/tirith-core/src/capsule/linux.rs
++++ b/crates/tirith-core/src/capsule/linux.rs
+@@ -870,6 +870,6 @@
+ const SAFE_TERMINAL_IOCTL_REQUESTS: &[u64] = &[
+-    libc::TCGETS,
+-    libc::TIOCGWINSZ,
+-    libc::TIOCGPGRP,
+-    libc::FIONREAD,
++    libc::TCGETS as u64,
++    libc::TIOCGWINSZ as u64,
++    libc::TIOCGPGRP as u64,
++    libc::FIONREAD as u64,
+ ];

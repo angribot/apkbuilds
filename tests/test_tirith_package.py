@@ -11,12 +11,12 @@ import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APKBUILD = ROOT / "packages" / "tirith" / "APKBUILD"
-PATCH = ROOT / "packages" / "tirith" / "0001-add-apk-install-method.patch"
+ORIGIN = ROOT / "packages" / "tirith"
 
 
 class TirithPackageTest(unittest.TestCase):
-    def test_downstream_patch_applies_to_pinned_source(self):
-        """Keep the package patch applicable to the source it declares."""
+    def test_downstream_patches_apply_to_pinned_source(self):
+        """Keep package patches applicable to the source they declare."""
         apkbuild = APKBUILD.read_text()
         version = re.search(r"^pkgver=(\S+)$", apkbuild, re.MULTILINE).group(1)
         source = re.search(
@@ -39,15 +39,21 @@ class TirithPackageTest(unittest.TestCase):
                 tar.extractall(root)
 
             source_dir = root / f"tirith-{version}"
-            completed = subprocess.run(
-                ["patch", "--batch", "--dry-run", "--forward", "-p1"],
-                cwd=source_dir,
-                input=PATCH.read_text(),
-                capture_output=True,
-                text=True,
-            )
-
-        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            patches = re.findall(r"^\s+(\S+\.patch)$", apkbuild, re.MULTILINE)
+            self.assertTrue(patches)
+            for patch_name in patches:
+                completed = subprocess.run(
+                    ["patch", "--batch", "--forward", "-p1"],
+                    cwd=source_dir,
+                    input=(ORIGIN / patch_name).read_text(),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(
+                    completed.returncode,
+                    0,
+                    completed.stdout + completed.stderr,
+                )
 
 
 if __name__ == "__main__":
