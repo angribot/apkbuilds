@@ -63,7 +63,9 @@ class PlanOriginsTest(unittest.TestCase):
         self.git(self.root, "add", path)
         self.git(self.root, "commit", "-q", "-m", message)
 
-    def run_plan(self, *, revision, base_revision="", full="false"):
+    def run_plan(
+        self, *, revision, base_revision="", full="false", explicit_revision="true"
+    ):
         output = self.root / "output"
         runner_temp = self.root / "runner-temp"
         runner_temp.mkdir(exist_ok=True)
@@ -76,6 +78,7 @@ class PlanOriginsTest(unittest.TestCase):
                 "BEFORE": "",
                 "REVISION": revision,
                 "BASE_REVISION": base_revision,
+                "EXPLICIT_REVISION": explicit_revision,
                 "MAIN_REVISION": "main",
                 "RUNNER_TEMP": str(runner_temp),
                 "GITHUB_OUTPUT": str(output),
@@ -113,6 +116,18 @@ class PlanOriginsTest(unittest.TestCase):
         outputs = self.plan_outputs(completed)
         matrix = json.loads(outputs["matrix"])
         self.assertEqual({item["origin"] for item in matrix["include"]}, {"beta"})
+
+    def test_manual_dispatch_without_selection_reconciles_every_origin(self):
+        completed = self.run_plan(
+            revision=self.beta_commit,
+            explicit_revision="false",
+        )
+
+        outputs = self.plan_outputs(completed)
+        matrix = json.loads(outputs["matrix"])
+        self.assertEqual(
+            {item["origin"] for item in matrix["include"]}, {"alpha", "beta"}
+        )
 
     def test_full_manual_dispatch_plans_every_origin(self):
         completed = self.run_plan(revision=self.beta_commit, full="true")

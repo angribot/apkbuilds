@@ -25,7 +25,13 @@ if [ "$EVENT" = "workflow_dispatch" ]; then
   fi
 fi
 
-if [ "$EVENT" = "schedule" ] || [ "$FULL" = "true" ]; then
+if [ "$EVENT" = "schedule" ] || [ "$FULL" = "true" ] || {
+  [ "$EVENT" = "workflow_dispatch" ] &&
+  [ "$EXPLICIT_REVISION" = "false" ] &&
+  [ -z "$BASE_REVISION" ]
+}; then
+  # A manual run without a selected range is a reconciliation run. The
+  # published snapshot may lag behind more than the current parent commit.
   origins=$(all_origins)
 elif [ "$EVENT" = "pull_request" ]; then
   git diff --name-only "$BASE" -- packages/ > "$changed"
