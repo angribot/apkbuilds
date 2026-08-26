@@ -1,0 +1,73 @@
+name: CI cache benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: 'main revision to benchmark'
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.revision || github.event.repository.default_branch }}
+          fetch-depth: 1
+      - name: Measure orbien cold and warm compiler builds
+        env:
+          ARCH: x86_64
+          ORIGIN: orbien
+          PUBLISHED: https://angribot.github.io/apkbuilds/edge/x86_64
+          SOURCE_REVISION: ${{ inputs.revision || github.sha }}
+        run: |
+          set -eu
+          cache="$RUNNER_TEMP/orbien-cache"
+          rm -rf "$cache"
+          mkdir -p "$cache/distfiles" "$cache/cargo" "$cache/ccache" "$cache/sccache"
+          for mode in cold warm; do
+            output="$RUNNER_TEMP/orbien-$mode"
+            rm -rf "$output"
+            mkdir -p "$output"
+            # The first pass starts with empty compiler caches. The second pass
+            # reuses the exact same directories and reports warm-cache metrics.
+            docker run --rm \
+              -e ARCH \
+              -e ORIGIN \
+              -v "$GITHUB_WORKSPACE:/workspace:ro" \
+              -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \
+              -v "$output:/new" \
+              -v "$cache/distfiles:/var/cache/distfiles" \
+              -v "$cache/cargo:/home/builder/.cache/cargo" \
+              -v "$cache/ccache:/home/builder/.cache/ccache" \
+              -v "$cache/sccache:/home/builder/.cache/sccache" \
+              -w /workspace \
+              alpine:edge \
+                /workspace/scripts/build-package-family.sh \
+                  --arch "$ARCH" \
+                  --origin "$ORIGIN" \
+                  --published "$PUBLISHED" \
+                  --source-revision "$SOURCE_REVISION" \
+                  --workspace /workspace \
+                  --output /new \
+                  --repository-key /keys/apkbuilds.rsa.pub \
+                  --distfiles /var/cache/distfiles \
+                  --cargo-home /home/builder/.cache/cargo \
+                  --ccache-dir /home/builder/.cache/ccache \
+                  --sccache-dir /home/builder/.cache/sccache \
+                  --force-build
+            metrics="$output/metrics/$ARCH/$ORIGIN/build.txt"
+            printf 'build_mode=%s\n' "$mode" >> "$metrics"
+            {
+              echo "### Orbien $mode compiler-cache measurement"
+              echo
+              cat "$metrics"
+            } >> "$GITHUB_STEP_SUMMARY"
+            cat "$metrics"
+          done

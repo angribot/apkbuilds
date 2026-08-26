@@ -12,7 +12,7 @@ usage() {
 usage: build-package-family.sh --arch ARCH --origin ORIGIN \
   --published URL --source-revision REVISION --workspace DIR --output DIR \
   --repository-key FILE --distfiles DIR --cargo-home DIR \
-  --ccache-dir DIR --sccache-dir DIR
+  --ccache-dir DIR --sccache-dir DIR [--force-build]
 USAGE
 }
 
@@ -27,6 +27,7 @@ distfiles=
 cargo_home=
 ccache_dir=
 sccache_dir=
+force_build=false
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -47,6 +48,10 @@ while [ "$#" -gt 0 ]; do
         --sccache-dir) sccache_dir=$2 ;;
       esac
       shift 2
+      ;;
+    --force-build)
+      force_build=true
+      shift
       ;;
     --help)
       usage >&1
@@ -119,7 +124,7 @@ if ! package_sets_equal "$expected" "$published_packages"; then
   printf '::notice::%s package set mismatch: source revision=%s declared build=%s published build(s)=%s\n' \
     "$origin" "$source_revision" "$declared" "$published_builds"
 fi
-if package_sets_equal "$expected" "$published_packages"; then
+if [ "$force_build" != true ] && package_sets_equal "$expected" "$published_packages"; then
   stage='published-family'
   published_apks="/tmp/published/$origin"
   mkdir -p "$published_apks"
@@ -134,7 +139,7 @@ if package_sets_equal "$expected" "$published_packages"; then
   exit 0
 fi
 
-if grep -Fx "$declared" "$versions" >/dev/null; then
+if [ "$force_build" != true ] && grep -Fx "$declared" "$versions" >/dev/null; then
   stage=build-identity
   printf '::error::%s build mismatch: source revision=%s declared build=%s published build(s)=%s\n' \
     "$origin" "$source_revision" "$declared" "$published_builds" >&2

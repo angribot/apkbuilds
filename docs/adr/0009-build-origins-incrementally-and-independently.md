@@ -19,4 +19,7 @@ fails, while CI recovery retries only final branch publication failures.
 Ordinary runs remain incremental and parallel without weakening signing
 isolation (ADR-0002) or atomic package-family publication (ADR-0006); validation,
 build, signing, and verification failures remain visible rather than being
-silently retried.
+silently retried. The manually dispatched `CI cache benchmark` workflow
+measures the Rust-heavy `orbien` package origin once with empty compiler caches
+and once with shared caches, recording build time, cache size, and compiler
+cache statistics.
