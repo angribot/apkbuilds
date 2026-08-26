@@ -142,6 +142,40 @@ package_sets_equal() {
   ' "$1" "$2"
 }
 
+# Retry only APK index acquisition. Package resolution and installation are
+# deliberately outside this loop because resolver failures are deterministic.
+#   apk_update_with_retry
+apk_update_with_retry() {
+  _aur_delays=${APK_UPDATE_RETRY_DELAYS:-0 5 10 20 40 60}
+  _aur_attempt=0
+  for _aur_delay in $_aur_delays; do
+    _aur_attempt=$((_aur_attempt + 1))
+    [ "$_aur_delay" -eq 0 ] || sleep "$_aur_delay"
+    if apk update; then
+      return 0
+    fi
+    printf 'apk index retrieval attempt %s failed\n' "$_aur_attempt" >&2
+  done
+  return 1
+}
+
+# Install one exact package-origin build and log the identity on failure. This
+# command is intentionally not part of apk_update_with_retry's retry loop.
+#   apk_add_pinned_origin <arch> <origin> <declared-build> <published-builds> <spec>
+apk_add_pinned_origin() {
+  _apo_arch=$1
+  _apo_origin=$2
+  _apo_declared=$3
+  _apo_published=$4
+  _apo_spec=$5
+  if apk add "$_apo_spec"; then
+    return 0
+  fi
+  printf '::error::verify stage=install arch=%s package-origin=%s declared-build=%s published-build(s)=%s\n' \
+    "$_apo_arch" "$_apo_origin" "$_apo_declared" "$_apo_published" >&2
+  return 1
+}
+
 # Print "name=version-rrevision" for a package origin, the exact-version form
 # `apk add` needs to prove the published APK repository serves this build.
 #   apkbuild_pinned_spec <origin-directory>

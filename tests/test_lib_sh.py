@@ -1,5 +1,6 @@
 """Tests for scripts/lib.sh."""
 
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -189,6 +190,80 @@ o:zerostack
             actual.write_text("gnupg.apk\n")
             status, _ = run_helper(f'package_sets_equal "{expected}" "{actual}"')
         self.assertNotEqual(status, 0)
+
+
+class ApkVerificationRetryTest(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = pathlib.Path(directory.name)
+        fake_bin = self.root / "bin"
+        fake_bin.mkdir()
+        apk = fake_bin / "apk"
+        apk.write_text(
+            """#!/bin/sh
+command=$1
+case "$command" in
+update)
+    count=0
+    [ -f "$APK_UPDATE_COUNT" ] && count=$(cat "$APK_UPDATE_COUNT")
+    count=$((count + 1))
+    printf '%s\\n' "$count" > "$APK_UPDATE_COUNT"
+    [ "$count" -le "${APK_UPDATE_FAILURES:-0}" ] && exit 1
+    exit 0
+    ;;
+add)
+    count=0
+    [ -f "$APK_ADD_COUNT" ] && count=$(cat "$APK_ADD_COUNT")
+    count=$((count + 1))
+    printf '%s\\n' "$count" > "$APK_ADD_COUNT"
+    exit "${APK_ADD_EXIT:-0}"
+    ;;
+esac
+"""
+        )
+        apk.chmod(0o755)
+        self.env = os.environ.copy()
+        self.env.update(
+            {
+                "PATH": os.pathsep.join([str(fake_bin), self.env["PATH"]]),
+                "APK_UPDATE_COUNT": str(self.root / "update-count"),
+                "APK_ADD_COUNT": str(self.root / "add-count"),
+                "APK_UPDATE_RETRY_DELAYS": "0 0 0",
+            }
+        )
+
+    def run_helper_with_env(self, script):
+        return subprocess.run(
+            ["sh", "-eu", "-c", f". {LIB}\n{script}"],
+            capture_output=True,
+            text=True,
+            env=self.env,
+        )
+
+    def test_retries_transient_index_acquisition_then_succeeds(self):
+        self.env["APK_UPDATE_FAILURES"] = "2"
+        completed = self.run_helper_with_env("apk_update_with_retry")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual((self.root / "update-count").read_text().strip(), "3")
+
+    def test_exhausted_index_retries_fail(self):
+        self.env["APK_UPDATE_FAILURES"] = "3"
+        completed = self.run_helper_with_env("apk_update_with_retry")
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual((self.root / "update-count").read_text().strip(), "3")
+
+    def test_resolver_failure_is_not_retried_and_logs_build_identity(self):
+        self.env["APK_ADD_EXIT"] = "1"
+        completed = self.run_helper_with_env(
+            "apk_add_pinned_origin x86_64 orbien 3.2.0-r0 3.1.0-r0 orbien=3.2.0-r0"
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual((self.root / "add-count").read_text().strip(), "1")
+        self.assertIn("stage=install", completed.stderr)
+        self.assertIn("package-origin=orbien", completed.stderr)
+        self.assertIn("declared-build=3.2.0-r0", completed.stderr)
+        self.assertIn("published-build(s)=3.1.0-r0", completed.stderr)
 
 
 class CallerIsolationTest(unittest.TestCase):

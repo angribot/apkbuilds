@@ -487,17 +487,39 @@ jobs:
               cp /pages/apkbuilds.rsa.pub \
                 /etc/apk/keys/apkbuilds.rsa.pub
               echo "/pages/edge" >> /etc/apk/repositories
-              set -- apk add
+              apk_repository="/pages/edge/${{ matrix.arch }}"
+              index=/tmp/APKINDEX
+              tar -xOzf "$apk_repository/APKINDEX.tar.gz" APKINDEX \
+                > "$index"
+              apkindex_apks "$index" > /tmp/indexed
+              find "$apk_repository" -maxdepth 1 -type f -name "*.apk" \
+                -exec basename {} \; > /tmp/physical
+              package_sets_equal /tmp/indexed /tmp/physical
+              if ! apk_update_with_retry; then
+                printf "::error::verify stage=index arch=%s package-origin=all declared-builds=all published-builds=unknown\\n" \
+                  "${{ matrix.arch }}" >&2
+                exit 1
+              fi
               for origin in $(all_origins); do
                 supports_arch "${{ matrix.arch }}" \
                   "packages/$origin/APKBUILD" || continue
-                set -- "$@" "$(apkbuild_pinned_spec "packages/$origin")"
+                declared=$(apkbuild_field pkgver \
+                  "packages/$origin/APKBUILD")-r$(
+                  apkbuild_field pkgrel "packages/$origin/APKBUILD"
+                )
+                versions="/tmp/published-versions-$origin"
+                apkindex_origin_versions "$index" "$origin" > "$versions"
+                published_builds=
+                while IFS= read -r version; do
+                  [ -n "$published_builds" ] && published_builds="$published_builds "
+                  published_builds="$published_builds$version"
+                done < "$versions"
+                [ -n "$published_builds" ] || published_builds='<none>'
+                spec=$(apkbuild_pinned_spec "packages/$origin")
+                apk_add_pinned_origin \
+                  "${{ matrix.arch }}" "$origin" "$declared" \
+                  "$published_builds" "$spec" || exit 1
               done
-              for delay in 0 5 10 20 40 60; do
-                sleep "$delay"
-                apk update && "$@" && exit 0
-              done
-              exit 1
             '
 
   publish:

@@ -251,6 +251,15 @@ class PackageOriginReplacementTest(unittest.TestCase):
         self.assertIn("apkindex_apks", verification_script)
         self.assertIn("package_sets_equal", verification_script)
 
+    def test_verification_retries_index_updates_but_not_resolver_failures(self):
+        verify_start = WORKFLOW.index("  verify:")
+        publish_start = WORKFLOW.index("\n  publish:", verify_start)
+        verify = WORKFLOW[verify_start:publish_start]
+        self.assertIn("apk_update_with_retry", verify)
+        self.assertIn("apk_add_pinned_origin", verify)
+        self.assertNotIn("for delay in", verify)
+        self.assertIn("package-origin=", (ROOT / "scripts" / "lib.sh").read_text())
+
     def test_staged_snapshot_is_installed_before_publication(self):
         verify_job = WORKFLOW.index("\n  verify:")
         publish_job = WORKFLOW.index("\n  publish:")
