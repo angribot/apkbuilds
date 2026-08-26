@@ -4,6 +4,7 @@ import os
 import pathlib
 import stat
 import subprocess
+import tarfile
 import tempfile
 import unittest
 
@@ -107,6 +108,122 @@ class CiModuleTest(unittest.TestCase):
         self.assertIn("stage=toolchain", completed.stderr)
         self.assertIn("arch=x86_64", completed.stderr)
         self.assertIn("package-origin=demo", completed.stderr)
+
+    def test_verify_module_checks_and_installs_a_declared_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            pages = root / "pages" / "edge" / "x86_64"
+            pages.mkdir(parents=True)
+            (pages / "alpha-1-r0.apk").write_bytes(b"not-an-apk")
+            index = root / "index"
+            index.write_text("P:alpha\nV:1-r0\nA:x86_64\no:alpha\n")
+            with tarfile.open(pages / "APKINDEX.tar.gz", "w:gz") as archive:
+                archive.add(index, arcname="APKINDEX")
+            workspace = root / "workspace"
+            (workspace / "scripts").mkdir(parents=True)
+            (workspace / "packages" / "alpha").mkdir(parents=True)
+            (workspace / "scripts" / "lib.sh").write_text(
+                (SCRIPTS / "lib.sh").read_text()
+            )
+            (workspace / "packages" / "alpha" / "APKBUILD").write_text(
+                "pkgname=alpha\npkgver=1\npkgrel=0\n"
+            )
+            key = root / "public-key"
+            key.write_text("public\n")
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            apk = fake_bin / "apk"
+            apk.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = add ]; then\n"
+                "  printf '%s\\n' \"$2\" > \"$APK_ADD_RESULT\"\n"
+                "fi\n"
+                "exit 0\n"
+            )
+            apk.chmod(apk.stat().st_mode | stat.S_IXUSR)
+            repositories = root / "repositories"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": os.pathsep.join([str(fake_bin), env["PATH"]]),
+                    "APK_ADD_RESULT": str(root / "added"),
+                    "APK_UPDATE_RETRY_DELAYS": "0",
+                }
+            )
+            completed = subprocess.run(
+                [
+                    "sh",
+                    str(SCRIPTS / "verify-repository.sh"),
+                    "--pages",
+                    str(root / "pages"),
+                    "--workspace",
+                    str(workspace),
+                    "--arch",
+                    "x86_64",
+                    "--repository-key",
+                    str(key),
+                    "--key-directory",
+                    str(root / "keys"),
+                    "--repositories-file",
+                    str(repositories),
+                    "--install-declared-builds",
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertTrue(
+                (root / "added").exists(), completed.stdout + completed.stderr
+            )
+            self.assertEqual((root / "added").read_text().strip(), "alpha=1-r0")
+
+    def test_sign_module_reports_a_package_failure_with_architecture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            fake_cp = fake_bin / "cp"
+            fake_cp.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$2\" = /etc/apk/keys/ ]; then exit 0; fi\n"
+                "exec /bin/cp \"$@\"\n"
+            )
+            fake_cp.chmod(fake_cp.stat().st_mode | stat.S_IXUSR)
+            fake_apk = fake_bin / "apk"
+            fake_apk.write_text("#!/bin/sh\nexit 1\n")
+            fake_apk.chmod(fake_apk.stat().st_mode | stat.S_IXUSR)
+            fake_split = fake_bin / "abuild-gzsplit"
+            fake_split.write_text("#!/bin/sh\nexit 1\n")
+            fake_split.chmod(fake_split.stat().st_mode | stat.S_IXUSR)
+            pages = root / "pages" / "edge" / "x86_64"
+            pages.mkdir(parents=True)
+            (pages / "demo-1-r0.apk").write_bytes(b"not-an-apk")
+            public_key = root / "public-key"
+            private_key = root / "private-key"
+            public_key.write_text("public\n")
+            private_key.write_text("private\n")
+            env = os.environ.copy()
+            env["PATH"] = os.pathsep.join([str(fake_bin), env["PATH"]])
+            completed = subprocess.run(
+                [
+                    "sh",
+                    str(SCRIPTS / "sign-repository.sh"),
+                    "--pages",
+                    str(root / "pages"),
+                    "--repository-key",
+                    str(public_key),
+                    "--private-key-file",
+                    str(private_key),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("stage=package-signing", completed.stderr)
+        self.assertIn("arch=x86_64", completed.stderr)
+        self.assertIn("package-origin=all", completed.stderr)
 
     def test_sign_module_accepts_an_empty_repository(self):
         with tempfile.TemporaryDirectory() as directory:

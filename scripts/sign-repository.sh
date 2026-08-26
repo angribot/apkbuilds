@@ -48,8 +48,8 @@ stage=arguments
 failure() {
   status=$?
   if [ "$status" -ne 0 ]; then
-    printf '::error::sign stage=%s arch=all package-origin=all exit=%s\n' \
-      "$stage" "$status" >&2
+    printf '::error::sign stage=%s arch=%s package-origin=%s exit=%s\n' \
+      "$stage" "$arch" "$origin" "$status" >&2
   fi
   rm -f /tmp/apkbuilds.rsa
   exit "$status"
@@ -65,6 +65,7 @@ cp "$repository_key" /etc/apk/keys/
 stage='package-signing'
 for sign_arch in x86_64 aarch64; do
   arch=$sign_arch
+  stage='package-signing'
   apk_repository="$pages/edge/$arch"
   test -d "$apk_repository" || continue
   for package in "$apk_repository"/*.apk; do

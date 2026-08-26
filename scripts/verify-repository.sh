@@ -8,7 +8,8 @@ set -eu
 usage() {
   cat >&2 <<'USAGE'
 usage: verify-repository.sh --pages DIR --workspace DIR --arch ARCH|all \
-  --repository-key FILE [--install-declared-builds]
+  --repository-key FILE [--install-declared-builds] [--key-directory DIR] \
+  [--repositories-file FILE]
 USAGE
 }
 
@@ -17,6 +18,8 @@ workspace=
 requested_arch=
 repository_key=
 install_declared_builds=false
+key_directory=/etc/apk/keys
+repositories_file=/etc/apk/repositories
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --pages|--workspace|--arch|--repository-key)
@@ -32,6 +35,14 @@ while [ "$#" -gt 0 ]; do
     --install-declared-builds)
       install_declared_builds=true
       shift
+      ;;
+    --key-directory|--repositories-file)
+      [ "$#" -ge 2 ] || { usage; exit 2; }
+      case "$1" in
+        --key-directory) key_directory=$2 ;;
+        --repositories-file) repositories_file=$2 ;;
+      esac
+      shift 2
       ;;
     --help)
       usage >&1
@@ -78,7 +89,8 @@ verify_arch() {
   [ -d "$apk_repository" ] || return 0
 
   stage=signature
-  cp "$repository_key" /etc/apk/keys/apkbuilds.rsa.pub
+  mkdir -p "$key_directory"
+  cp "$repository_key" "$key_directory/apkbuilds.rsa.pub"
   apk verify "$apk_repository/APKINDEX.tar.gz"
   apk verify "$apk_repository"/*.apk
   work=$(mktemp -d)
@@ -94,7 +106,7 @@ verify_arch() {
     work=
     return 0
   fi
-  echo "/pages/edge" >> /etc/apk/repositories
+  echo "/pages/edge" >> "$repositories_file"
   stage=index
   if ! apk_update_with_retry; then
     printf '::error::verify stage=index arch=%s package-origin=all declared-builds=all published-builds=unknown\n' \
@@ -103,6 +115,7 @@ verify_arch() {
   fi
 
   stage=install
+  cd "$workspace"
   for origin in $(all_origins); do
     supports_arch "$arch" "$workspace/packages/$origin/APKBUILD" || continue
     declared=$(apkbuild_declared_build "$workspace/packages/$origin")
