@@ -87,7 +87,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         # Publication skips a complete declared package family, so an edit
         # that forgets to bump pkgrel would never reach users.
-        run: sh scripts/check-package-versions.sh
+        run: sh scripts/check-declared-build.sh
 
   plan:
     # Planning only reads the checkout, so it can overlap repository checks.
