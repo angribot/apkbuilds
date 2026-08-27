@@ -6,6 +6,8 @@ set -eu
 . scripts/lib.sh
 
 changed="$RUNNER_TEMP/changed-files"
+selected_origins=${SELECTED_ORIGINS:-}
+reconcile=false
 if [ "$EVENT" = "workflow_dispatch" ]; then
   if ! target_commit=$(git rev-parse "$REVISION^{commit}"); then
     printf '::error::invalid selected revision %s\n' "$REVISION" >&2
@@ -24,14 +26,18 @@ fi
 if [ "$EVENT" = "schedule" ] || [ "$FULL" = "true" ] || {
   [ "$EVENT" = "workflow_dispatch" ] &&
   [ "$EXPLICIT_REVISION" = "false" ] &&
-  [ -z "$BASE_REVISION" ]
+  [ -z "$BASE_REVISION" ] &&
+  [ -z "$selected_origins" ]
 }; then
   # A manual run without a selected range is a reconciliation run. The
   # published snapshot may lag behind more than the current parent commit.
+  reconcile=true
   origins=$(all_origins)
 elif [ "$EVENT" = "pull_request" ]; then
   git diff --no-renames --name-only "$BASE" -- packages/ > "$changed"
   origins=$(changed_origins "$changed")
+elif [ "$EVENT" = "workflow_dispatch" ] && [ -n "$selected_origins" ]; then
+  origins=$selected_origins
 elif [ "$EVENT" = "workflow_dispatch" ]; then
   if [ -n "$BASE_REVISION" ]; then
     if ! base_commit=$(git rev-parse "$BASE_REVISION^{commit}"); then
@@ -56,6 +62,18 @@ else
   origins=$(changed_origins "$changed")
 fi
 
+for origin in $origins; do
+  if [ ! -f "packages/$origin/APKBUILD" ]; then
+    printf '::error::selected package origin %s has no APKBUILD\n' \
+      "$origin" >&2
+    exit 1
+  fi
+  if ! assert_origin_directory "packages/$origin"; then
+    printf '::error::selected package origin %s is invalid\n' "$origin" >&2
+    exit 1
+  fi
+done
+
 items=
 for origin in $origins; do
   for arch in x86_64 aarch64; do
@@ -68,6 +86,7 @@ for origin in $origins; do
   done
 done
 
+echo "reconcile=$reconcile" >> "$GITHUB_OUTPUT"
 if [ -z "$items" ]; then
   echo "has_origins=false" >> "$GITHUB_OUTPUT"
   echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"

@@ -1,0 +1,7 @@
+# package-origin|updater|updater-test
+gnupg|scripts/update-gnupg.py|tests/test_update_gnupg.py
+zerostack|scripts/update-zerostack.py|tests/test_update_zerostack.py
+tirith|scripts/update-tirith.py|tests/test_update_tirith.py
+ports-box|scripts/update-ports-box.py|tests/test_update_ports_box.py
+orbien|scripts/update-orbien.py|tests/test_update_orbien.py
+realm|scripts/update-realm.py|tests/test_update_realm.py

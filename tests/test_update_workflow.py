@@ -5,19 +5,12 @@ import shutil
 import subprocess
 import unittest
 
+from tests.update_manifest import read_manifest
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKFLOW = (ROOT / ".github" / "workflows" / "update.yml").read_text()
 UPDATER_PATH = ROOT / "scripts" / "update-packages.sh"
 UPDATER = UPDATER_PATH.read_text()
-
-PACKAGE_ORIGINS = (
-    ("gnupg", "scripts/update-gnupg.py", "packages/gnupg/APKBUILD"),
-    ("zerostack", "scripts/update-zerostack.py", "packages/zerostack/APKBUILD"),
-    ("tirith", "scripts/update-tirith.py", "packages/tirith/APKBUILD"),
-    ("ports-box", "scripts/update-ports-box.py", "packages/ports-box/APKBUILD"),
-    ("orbien", "scripts/update-orbien.py", "packages/orbien/APKBUILD"),
-    ("realm", "scripts/update-realm.py", "packages/realm/APKBUILD"),
-)
 
 
 class PackageUpdateTest(unittest.TestCase):
@@ -25,15 +18,37 @@ class PackageUpdateTest(unittest.TestCase):
         self.assertIn("sh scripts/update-packages.sh", WORKFLOW)
         self.assertIn("fetch-depth: 0", WORKFLOW)
         self.assertIn("ref: ${{ github.event.repository.default_branch }}", WORKFLOW)
+        self.assertIn("ssh-key: ${{ secrets.UPDATE_DEPLOY_KEY }}", WORKFLOW)
         self.assertNotIn("strategy:", WORKFLOW)
         self.assertNotIn("matrix:", WORKFLOW)
 
-        positions = []
-        for package_origin, updater, apkbuild in PACKAGE_ORIGINS:
-            entry = f"{package_origin}|{updater}|{apkbuild}"
-            position = UPDATER.index(entry)
-            positions.append(position)
-        self.assertEqual(positions, sorted(positions))
+        self.assertIn(
+            "sh scripts/update-packages.sh packages/updaters", WORKFLOW
+        )
+        self.assertNotIn("scripts/update-gnupg.py", UPDATER)
+
+        entries = read_manifest()
+        self.assertEqual(
+            [origin for origin, _, _ in entries],
+            ["gnupg", "zerostack", "tirith", "ports-box", "orbien", "realm"],
+        )
+
+    def test_manifest_registers_every_origin_updater_and_test(self):
+        entries = read_manifest()
+        registered = {origin for origin, _, _ in entries}
+        package_origins = {
+            path.parent.name for path in (ROOT / "packages").glob("*/APKBUILD")
+        }
+        self.assertEqual(registered, package_origins)
+
+        for origin, updater, test in entries:
+            with self.subTest(origin=origin):
+                if updater == "-":
+                    self.assertEqual(test, "-")
+                else:
+                    self.assertTrue((ROOT / updater).is_file(), updater)
+                    self.assertNotEqual(test, "-")
+                    self.assertTrue((ROOT / test).is_file(), test)
 
     def test_workflow_dispatches_one_publication_for_successful_updates(self):
         self.assertIn("GH_TOKEN: ${{ github.token }}", WORKFLOW)
@@ -44,10 +59,23 @@ class PackageUpdateTest(unittest.TestCase):
         self.assertIn("final_commit=$(git rev-parse origin/main)", UPDATER)
         self.assertIn("gh workflow run ci.yml --ref main", UPDATER)
         self.assertIn(
-            '-f base_revision="$initial_commit" -f revision="$final_commit"',
-            UPDATER,
+            'dispatch_publication "$initial_commit" "$final_commit"', UPDATER
         )
+        self.assertIn(
+            '-f base_revision="$_dp_initial_commit"', UPDATER
+        )
+        self.assertIn("DISPATCH_ATTEMPTS=3", UPDATER)
+        self.assertIn('while [ "$_dp_attempt" -le "$DISPATCH_ATTEMPTS" ]', UPDATER)
         self.assertIn("could not dispatch CI publication", UPDATER)
+        self.assertIn("publication_dispatch_failed=true", UPDATER)
+        self.assertIn("id: update", WORKFLOW)
+        self.assertIn(
+            "if: failure() && steps.update.outputs.publication_dispatch_failed == 'true'",
+            WORKFLOW,
+        )
+        self.assertIn("for attempt in 1 2 3", WORKFLOW)
+        self.assertIn("gh workflow run ci.yml --ref main -f full=false", WORKFLOW)
+        self.assertIn("reconciliation dispatch attempt", WORKFLOW)
 
     def test_workflow_stages_each_apkbuild_and_never_force_pushes(self):
         self.assertIn('git diff --quiet -- "$_pu_apkbuild"', UPDATER)
@@ -57,7 +85,10 @@ class PackageUpdateTest(unittest.TestCase):
         self.assertNotIn("--force", UPDATER)
 
     def test_workflow_retries_stale_pushes_with_a_bound(self):
-        self.assertIn("for _pc_attempt in 1 2 3", UPDATER)
+        self.assertIn("PUSH_ATTEMPTS=3", UPDATER)
+        self.assertIn(
+            'while [ "$_pc_attempt" -le "$PUSH_ATTEMPTS" ]', UPDATER
+        )
         self.assertIn("git fetch origin main", UPDATER)
         self.assertIn("git rebase origin/main", UPDATER)
         self.assertIn("git push origin HEAD:main", UPDATER)

@@ -4,12 +4,91 @@
 
 set -u
 
+if [ "$#" -ne 1 ]; then
+  echo "usage: update-packages.sh UPDATER-MANIFEST" >&2
+  exit 2
+fi
+updater_manifest=$1
+if [ ! -f "$updater_manifest" ]; then
+  echo "::error::updater manifest not found: $updater_manifest" >&2
+  exit 1
+fi
+
 PUSH_ATTEMPTS=3
+DISPATCH_ATTEMPTS=3
 failures=0
 fatal_failure=0
 has_updates=0
 initial_commit=
 final_commit=
+
+validate_updater_manifest() {
+  if ! awk -F '|' '
+    /^[[:space:]]*$/ || /^#/ { next }
+    NF != 3 {
+      printf "::error::invalid updater manifest line %d: expected package-origin|updater|updater-test\n", NR
+      invalid = 1
+      next
+    }
+    $1 == "" {
+      printf "::error::invalid updater manifest line %d: package origin is empty\n", NR
+      invalid = 1
+      next
+    }
+    seen[$1]++ {
+      printf "::error::duplicate package origin %s in updater manifest\n", $1
+      invalid = 1
+    }
+    END { exit invalid }
+  ' "$updater_manifest" >&2; then
+    return 1
+  fi
+
+  for _vum_apkbuild in packages/*/APKBUILD; do
+    [ -f "$_vum_apkbuild" ] || continue
+    _vum_origin=${_vum_apkbuild#packages/}
+    _vum_origin=${_vum_origin%/APKBUILD}
+    if ! awk -F '|' -v origin="$_vum_origin" \
+        '$1 == origin { found = 1 } END { exit !found }' \
+        "$updater_manifest"; then
+      echo "::error::$_vum_origin is missing from updater manifest" >&2
+      return 1
+    fi
+  done
+
+  while IFS='|' read -r _vum_origin _vum_updater _vum_test; do
+    case "$_vum_origin" in
+      ''|'#'*) continue ;;
+    esac
+    if [ ! -f "packages/$_vum_origin/APKBUILD" ]; then
+      echo "::error::updater manifest origin $_vum_origin has no APKBUILD" >&2
+      return 1
+    fi
+    if [ -z "$_vum_updater" ]; then
+      echo "::error::$_vum_origin has no updater registration; use - for none" >&2
+      return 1
+    fi
+    if [ "$_vum_updater" = "-" ]; then
+      if [ "$_vum_test" != "-" ]; then
+        echo "::error::$_vum_origin without an updater must register test as -" >&2
+        return 1
+      fi
+      continue
+    fi
+    if [ ! -f "$_vum_updater" ]; then
+      echo "::error::$_vum_origin updater not found: $_vum_updater" >&2
+      return 1
+    fi
+    if [ -z "$_vum_test" ] || [ "$_vum_test" = "-" ]; then
+      echo "::error::$_vum_origin updater has no test registration" >&2
+      return 1
+    fi
+    if [ ! -f "$_vum_test" ]; then
+      echo "::error::$_vum_origin updater test not found: $_vum_test" >&2
+      return 1
+    fi
+  done < "$updater_manifest"
+}
 
 # Drop the current package origin commit after a failed push. Successful
 # earlier package origins are already on origin/main, while the current one must
@@ -27,7 +106,8 @@ discard_uncommitted_update() {
 push_commit() {
   _pc_package_origin="$1"
 
-  for _pc_attempt in 1 2 3; do
+  _pc_attempt=1
+  while [ "$_pc_attempt" -le "$PUSH_ATTEMPTS" ]; do
     if git push origin HEAD:main; then
       return 0
     fi
@@ -35,6 +115,7 @@ push_commit() {
     echo "$_pc_package_origin push attempt $_pc_attempt did not reach main; fetching origin/main"
     if ! git fetch origin main; then
       echo "$_pc_package_origin could not fetch origin/main after push failure" >&2
+      _pc_attempt=$((_pc_attempt + 1))
       continue
     fi
 
@@ -53,9 +134,34 @@ push_commit() {
         return 1
       fi
     fi
+    _pc_attempt=$((_pc_attempt + 1))
   done
 
   echo "$_pc_package_origin push failed after $PUSH_ATTEMPTS attempts" >&2
+  return 1
+}
+
+mark_publication_dispatch_failure() {
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    echo 'publication_dispatch_failed=true' >> "$GITHUB_OUTPUT"
+  fi
+}
+
+dispatch_publication() {
+  _dp_initial_commit="$1"
+  _dp_final_commit="$2"
+
+  _dp_attempt=1
+  while [ "$_dp_attempt" -le "$DISPATCH_ATTEMPTS" ]; do
+    if gh workflow run ci.yml --ref main \
+        -f base_revision="$_dp_initial_commit" \
+        -f revision="$_dp_final_commit" -f full=false; then
+      return 0
+    fi
+    echo "CI publication dispatch attempt $_dp_attempt failed" >&2
+    _dp_attempt=$((_dp_attempt + 1))
+  done
+
   return 1
 }
 
@@ -109,6 +215,8 @@ process_update() {
   return 0
 }
 
+validate_updater_manifest || exit 1
+
 git config user.name 'github-actions[bot]'
 git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 if ! initial_commit=$(git rev-parse HEAD); then
@@ -116,11 +224,20 @@ if ! initial_commit=$(git rev-parse HEAD); then
   exit 1
 fi
 
-# Keep this list in the order in which package origins are processed. Each
-# entry is package origin|updater|APKBUILD and is deliberately independent.
-while IFS='|' read -r _main_package_origin _main_updater _main_apkbuild; do
+# Preserve manifest order: the updater is a single writer, and each package
+# origin reaches main before the next updater changes the checkout.
+while IFS='|' read -r _main_package_origin _main_updater _main_test; do
+  case "$_main_package_origin" in
+    ''|'#'*) continue ;;
+  esac
+  if [ "$_main_updater" = "-" ]; then
+    echo "$_main_package_origin has no updater; skipping"
+    continue
+  fi
+
   if process_update \
-    "$_main_package_origin" "$_main_updater" "$_main_apkbuild"; then
+    "$_main_package_origin" "$_main_updater" \
+    "packages/$_main_package_origin/APKBUILD"; then
     continue
   else
     _main_status=$?
@@ -130,14 +247,7 @@ while IFS='|' read -r _main_package_origin _main_updater _main_apkbuild; do
       break
     fi
   fi
-done <<'UPDATES'
-gnupg|scripts/update-gnupg.py|packages/gnupg/APKBUILD
-zerostack|scripts/update-zerostack.py|packages/zerostack/APKBUILD
-tirith|scripts/update-tirith.py|packages/tirith/APKBUILD
-ports-box|scripts/update-ports-box.py|packages/ports-box/APKBUILD
-orbien|scripts/update-orbien.py|packages/orbien/APKBUILD
-realm|scripts/update-realm.py|packages/realm/APKBUILD
-UPDATES
+done < "$updater_manifest"
 
 # A GITHUB_TOKEN push does not trigger another workflow. Dispatch one
 # publication run after every package origin has had its chance to update, and
@@ -146,9 +256,9 @@ if [ "$has_updates" -eq 1 ]; then
   if [ -z "$final_commit" ]; then
     echo "::error::could not dispatch CI publication without a main commit" >&2
     failures=1
-  elif ! gh workflow run ci.yml --ref main \
-      -f base_revision="$initial_commit" -f revision="$final_commit" -f full=false; then
-    echo "::error::could not dispatch CI publication for $final_commit" >&2
+  elif ! dispatch_publication "$initial_commit" "$final_commit"; then
+    echo "::error::could not dispatch CI publication for $final_commit after $DISPATCH_ATTEMPTS attempts" >&2
+    mark_publication_dispatch_failure
     failures=1
   fi
 fi

@@ -142,6 +142,76 @@ package_sets_equal() {
   ' "$1" "$2"
 }
 
+# Retry transient APK index acquisition only. Package resolution and
+# installation are deliberately outside this loop because resolver failures
+# are deterministic. The output check avoids retrying bad signatures, malformed
+# indexes, and repository configuration errors.
+#   apk_update_with_retry
+apk_update_with_retry() {
+  _aur_delays=${APK_UPDATE_RETRY_DELAYS:-0 5 10 20 40 60}
+  _aur_attempt=0
+  for _aur_delay in $_aur_delays; do
+    _aur_attempt=$((_aur_attempt + 1))
+    [ "$_aur_delay" -eq 0 ] || sleep "$_aur_delay"
+    _aur_output=$(mktemp)
+    if apk update > "$_aur_output" 2>&1; then
+      cat "$_aur_output"
+      rm -f "$_aur_output"
+      return 0
+    fi
+    cat "$_aur_output" >&2
+    if ! grep -Eiq \
+      'temporary error|try again|timed out|timeout|network|connection (refused|reset|timed out)|could not resolve|no route to host' \
+      "$_aur_output"; then
+      rm -f "$_aur_output"
+      printf 'apk index retrieval failed without retry\n' >&2
+      return 1
+    fi
+    rm -f "$_aur_output"
+    printf 'apk index retrieval attempt %s failed\n' "$_aur_attempt" >&2
+  done
+  return 1
+}
+
+# Install one exact package-origin build and log the identity on failure. This
+# command is intentionally not part of apk_update_with_retry's retry loop.
+#   apk_add_pinned_origin <arch> <origin> <declared-build> <published-builds> <spec>
+apk_add_pinned_origin() {
+  _apo_arch=$1
+  _apo_origin=$2
+  _apo_declared=$3
+  _apo_published=$4
+  _apo_spec=$5
+  if apk add "$_apo_spec"; then
+    return 0
+  fi
+  printf '::error::verify stage=install arch=%s package-origin=%s declared-build=%s published-build(s)=%s\n' \
+    "$_apo_arch" "$_apo_origin" "$_apo_declared" "$_apo_published" >&2
+  return 1
+}
+
+# Format the versions found for an origin into one log-safe field.
+#   format_published_builds <versions-file>
+format_published_builds() {
+  _fpb_file=$1
+  _fpb_builds=
+  while IFS= read -r _fpb_version; do
+    [ -n "$_fpb_builds" ] && _fpb_builds="$_fpb_builds "
+    _fpb_builds="$_fpb_builds$_fpb_version"
+  done < "$_fpb_file"
+  [ -n "$_fpb_builds" ] || _fpb_builds='<none>'
+  printf '%s\n' "$_fpb_builds"
+}
+
+# Print the declared package build identity for an origin directory.
+#   apkbuild_declared_build <origin-directory>
+apkbuild_declared_build() {
+  _adb_directory=$1
+  printf '%s-r%s\n' \
+    "$(apkbuild_field pkgver "$_adb_directory/APKBUILD")" \
+    "$(apkbuild_field pkgrel "$_adb_directory/APKBUILD")"
+}
+
 # Print "name=version-rrevision" for a package origin, the exact-version form
 # `apk add` needs to prove the published APK repository serves this build.
 #   apkbuild_pinned_spec <origin-directory>

@@ -3,15 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-    paths:
-      - '**'
-      - '!**.md'
-      - 'packages/**'
   pull_request:
-    paths:
-      - '**'
-      - '!**.md'
-      - 'packages/**'
   workflow_dispatch:
     inputs:
       full:
@@ -26,8 +18,13 @@ on:
         description: 'Base main commit for incremental planning'
         type: string
         default: ''
+      origins:
+        description: 'Space-separated package origins to build at the selected revision'
+        type: string
+        default: ''
   schedule:
-    - cron: '0 0 * * 0'
+    # Reconcile the published snapshot daily, even when no updater changed main.
+    - cron: '0 0 * * *'
 
 permissions:
   contents: read
@@ -40,9 +37,16 @@ concurrency:
 
 env:
   PAGES_URL: https://angribot.github.io/apkbuilds
+  # Bump this when the Alpine/Rust toolchain changes so compiler caches cannot
+  # cross a toolchain boundary.
+  CI_TOOLCHAIN: alpine-edge-rust-v1
 
 jobs:
   check:
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has_origins: ${{ steps.set-matrix.outputs.has_origins }}
+      reconcile: ${{ steps.set-matrix.outputs.reconcile }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     container: alpine:edge
@@ -59,8 +63,8 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Create the builder user
         # `abuild` refuses to run as root, and the container's only user is
-        # root. Reuse the build job's setup so both jobs get the same user.
-        run: . scripts/prepare-builder.sh "$GITHUB_WORKSPACE"
+        # root. The checkout is readable by builder and must not be re-owned.
+        run: . scripts/prepare-builder.sh
       - name: Lint APKBUILDs
         run: |
           # Feed the script over stdin: nesting it inside `su -c '...'` would
@@ -94,19 +98,6 @@ jobs:
         # Publication skips a complete declared package family, so an edit
         # that forgets to bump pkgrel would never reach users.
         run: sh scripts/check-declared-build.sh
-
-  plan:
-    # Planning only reads the checkout, so it can overlap repository checks.
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-      has_origins: ${{ steps.set-matrix.outputs.has_origins }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
-          ref: ${{ inputs.revision || github.sha }}
       - name: Compute changed origins
         id: set-matrix
         env:
@@ -116,17 +107,18 @@ jobs:
           BEFORE: ${{ github.event.before }}
           REVISION: ${{ inputs.revision || github.sha }}
           BASE_REVISION: ${{ inputs.base_revision }}
+          SELECTED_ORIGINS: ${{ inputs.origins }}
           EXPLICIT_REVISION: ${{ inputs.revision != '' && 'true' || 'false' }}
           MAIN_REVISION: origin/${{ github.event.repository.default_branch }}
         run: sh scripts/plan-origins.sh
 
   build:
-    needs: [check, plan]
-    if: needs.plan.outputs.has_origins == 'true'
+    needs: check
+    if: needs.check.outputs.has_origins == 'true'
     timeout-minutes: 90
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+      matrix: ${{ fromJSON(needs.check.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -141,139 +133,79 @@ jobs:
       # Restore the newest compatible snapshot, then save this build under a
       # unique key. GitHub Actions cache entries are immutable, so the save key
       # must never reuse the compatibility prefix itself.
-      - name: Compute ccache cache keys
-        id: ccache-key
+      - name: Compute compiler cache keys
+        id: compiler-cache-key
         run: |
-          echo "prefix=apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-" >> "$GITHUB_OUTPUT"
-          echo "key=apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-${{ hashFiles(format('packages/{0}/**', matrix.origin)) }}-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
-      - name: Restore ccache
+          echo "prefix=apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-${{ env.CI_TOOLCHAIN }}-" >> "$GITHUB_OUTPUT"
+          echo "key=apkbuilds-ccache-${{ matrix.arch }}-${{ matrix.origin }}-${{ runner.os }}-${{ env.CI_TOOLCHAIN }}-${{ hashFiles(format('packages/{0}/**', matrix.origin)) }}-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+      - name: Restore compiler caches
+        id: compiler-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ github.workspace }}/.cache/ccache-${{ matrix.origin }}
-          key: ${{ steps.ccache-key.outputs.key }}
-          restore-keys: ${{ steps.ccache-key.outputs.prefix }}
+          path: |
+            ${{ github.workspace }}/.cache/cargo-${{ matrix.origin }}
+            ${{ github.workspace }}/.cache/ccache-${{ matrix.origin }}
+            ${{ github.workspace }}/.cache/sccache-${{ matrix.origin }}
+          key: ${{ steps.compiler-cache-key.outputs.key }}
+          restore-keys: ${{ steps.compiler-cache-key.outputs.prefix }}
       - name: Build packages missing from the published APK repository
         env:
           ARCH: ${{ matrix.arch }}
           ORIGIN: ${{ matrix.origin }}
-          BRANCH: ${{ github.ref_name }}
         run: |
           mkdir -p "$RUNNER_TEMP/new"
-          mkdir -p .cache/distfiles .cache/ccache-${{ matrix.origin }}
-          # An ephemeral key signs these packages: this job runs upstream
-          # build scripts, so it must never see the repository signing key.
+          mkdir -p .cache/distfiles \
+            .cache/cargo-${{ matrix.origin }} \
+            .cache/ccache-${{ matrix.origin }} \
+            .cache/sccache-${{ matrix.origin }}
+          # The build module owns all network-capable and untrusted build work.
           docker run --rm \
             -e ARCH \
             -e ORIGIN \
-            -e BRANCH \
-            -e PUBLISHED="$PAGES_URL/edge/${{ matrix.arch }}" \
-            -v "$GITHUB_WORKSPACE:/workspace" \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
             -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \
             -v "$RUNNER_TEMP/new:/new" \
             -v "$GITHUB_WORKSPACE/.cache/distfiles:/var/cache/distfiles" \
+            -v "$GITHUB_WORKSPACE/.cache/cargo-${{ matrix.origin }}:/home/builder/.cache/cargo" \
             -v "$GITHUB_WORKSPACE/.cache/ccache-${{ matrix.origin }}:/home/builder/.cache/ccache" \
+            -v "$GITHUB_WORKSPACE/.cache/sccache-${{ matrix.origin }}:/home/builder/.cache/sccache" \
             -w /workspace \
-            alpine:edge sh -euxc '
-              sh scripts/prepare-builder.sh /new /workspace
-              . scripts/lib.sh
-
-              # Published package families are trusted only after their index
-              # is verified with the repository signing key.
-              cp /keys/apkbuilds.rsa.pub /etc/apk/keys/
-              mkdir -p /tmp/published
-              wget -q -T 15 -t 2 \
-                -O /tmp/published/APKINDEX.tar.gz \
-                "$PUBLISHED/APKINDEX.tar.gz"
-              apk verify /tmp/published/APKINDEX.tar.gz
-              tar -xOzf /tmp/published/APKINDEX.tar.gz APKINDEX \
-                > /tmp/published/APKINDEX
-
-              su builder -c "abuild-keygen -a -n"
-              cp /home/builder/.config/abuild/*.rsa.pub /etc/apk/keys/
-
-              supports_arch "$ARCH" "packages/$ORIGIN/APKBUILD" || exit 0
-              assert_origin_directory "packages/$ORIGIN"
-              expected="/tmp/expected-$ORIGIN"
-              published="/tmp/published-$ORIGIN"
-              su builder -c \
-                "cd /workspace/packages/$ORIGIN && abuild listpkg" \
-                > "$expected"
-              apkindex_origin_apks \
-                /tmp/published/APKINDEX "$ORIGIN" > "$published"
-              if package_sets_equal "$expected" "$published"; then
-                published_apks="/tmp/published/$ORIGIN"
-                mkdir -p "$published_apks"
-                while IFS= read -r package; do
-                  downloaded="$published_apks/$package"
-                  wget -q -T 15 -t 2 -O "$downloaded" \
-                    "$PUBLISHED/$package"
-                  apk verify "$downloaded"
-                done < "$expected"
-                printf "==> %s package family already published\n" "$ORIGIN"
-                exit 0
-              fi
-
-              declared=$(apkbuild_field pkgver "packages/$ORIGIN/APKBUILD")-r$(
-                apkbuild_field pkgrel "packages/$ORIGIN/APKBUILD"
-              )
-              versions="/tmp/published-versions-$ORIGIN"
-              apkindex_origin_versions \
-                /tmp/published/APKINDEX "$ORIGIN" > "$versions"
-              if grep -Fx "$declared" "$versions" >/dev/null; then
-                printf "%s %s already published with a different package set\n" \
-                  "$ORIGIN" "$declared" >&2
-                exit 1
-              fi
-
-              su builder -c \
-                "cd /workspace/packages/$ORIGIN && REPODEST=\"/new/$ORIGIN\" abuild -r"
-              built="/new/$ORIGIN/packages/$ARCH"
-              actual="/tmp/actual-$ORIGIN"
-              find "$built" -maxdepth 1 -type f -name "*.apk" \
-                -exec basename {} \; > "$actual"
-              if ! package_sets_equal "$expected" "$actual"; then
-                printf "%s build produced an incomplete package family\n" \
-                  "$ORIGIN" >&2
-                diff -u "$expected" "$actual" >&2 || true
-                exit 1
-              fi
-
-              # Installation and package-specific smoke tests happen before
-              # this family becomes a publication candidate.
-              set -- apk add --allow-untrusted --repository "$built"
-              for package in "$built"/*.apk; do set -- "$@" "$package"; done
-              "$@"
-              if [ "$ORIGIN" = gnupg ]; then
-                scripts/test-package.sh \
-                  "$(apkbuild_field pkgver packages/gnupg/APKBUILD)"
-              fi
-              if [ "$ORIGIN" = orbien ]; then
-                scripts/test-orbien.sh
-              fi
-              if [ "$ORIGIN" = ports-box ]; then
-                scripts/test-ports-box-service.sh
-              fi
-              if [ "$ORIGIN" = realm ]; then
-                scripts/test-realm-service.sh
-              fi
-              if [ "$ORIGIN" = tirith ]; then
-                scripts/test-tirith.sh \
-                  "$(apkbuild_field pkgver packages/tirith/APKBUILD)"
-              fi
-              candidate="/new/built/$ARCH/$ORIGIN"
-              mkdir -p "$candidate"
-              cp "$built"/*.apk "$candidate/"
-            '
-      - name: Save distfiles cache
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ github.workspace }}/.cache/distfiles
-          key: apkbuilds-distfiles-${{ matrix.arch }}-${{ matrix.origin }}-${{ hashFiles(format('packages/{0}/APKBUILD', matrix.origin)) }}
-      - name: Save ccache
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ github.workspace }}/.cache/ccache-${{ matrix.origin }}
-          key: ${{ steps.ccache-key.outputs.key }}
+            alpine:edge \
+              /workspace/scripts/build-package-family.sh \
+                --arch "$ARCH" \
+                --origin "$ORIGIN" \
+                --published "$PAGES_URL/edge/${{ matrix.arch }}" \
+                --source-revision "${{ inputs.revision || github.sha }}" \
+                --workspace /workspace \
+                --output /new \
+                --repository-key /keys/apkbuilds.rsa.pub \
+                --distfiles /var/cache/distfiles \
+                --cargo-home /home/builder/.cache/cargo \
+                --ccache-dir /home/builder/.cache/ccache \
+                --sccache-dir /home/builder/.cache/sccache
+      - name: Report compiler cache metrics
+        env:
+          CACHE_HIT: ${{ steps.compiler-cache.outputs.cache-hit }}
+          CACHE_MATCHED_KEY: ${{ steps.compiler-cache.outputs.cache-matched-key }}
+        run: |
+          metrics="$RUNNER_TEMP/new/metrics/${{ matrix.arch }}/${{ matrix.origin }}/build.txt"
+          if [ -f "$metrics" ]; then
+            if [ -n "$CACHE_MATCHED_KEY" ]; then
+              echo 'build_mode=warm' >> "$metrics"
+            else
+              echo 'build_mode=cold' >> "$metrics"
+            fi
+            cat "$metrics"
+            {
+              echo '### Compiler cache metrics'
+              echo
+              echo "cache_exact_hit=$CACHE_HIT"
+              echo "cache_restore_key=$CACHE_MATCHED_KEY"
+              cat "$metrics"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "no compiler cache metrics: no package build for ${{ matrix.arch }} ${{ matrix.origin }}"
+          fi
       - name: Stage the built packages
         id: stage
         run: |
@@ -284,6 +216,23 @@ jobs:
             echo 'built=false' >> "$GITHUB_OUTPUT"
             echo "no new packages for ${{ matrix.arch }} ${{ matrix.origin }}"
           fi
+      # Cache entries are immutable and a no-op build has no new compiler
+      # inputs. Only a successfully staged package build may save them.
+      - name: Save distfiles cache
+        if: steps.stage.outputs.built == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.cache/distfiles
+          key: apkbuilds-distfiles-${{ matrix.arch }}-${{ matrix.origin }}-${{ hashFiles(format('packages/{0}/APKBUILD', matrix.origin)) }}
+      - name: Save compiler caches
+        if: steps.stage.outputs.built == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ github.workspace }}/.cache/cargo-${{ matrix.origin }}
+            ${{ github.workspace }}/.cache/ccache-${{ matrix.origin }}
+            ${{ github.workspace }}/.cache/sccache-${{ matrix.origin }}
+          key: ${{ steps.compiler-cache-key.outputs.key }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: steps.stage.outputs.built == 'true'
         with:
@@ -296,10 +245,10 @@ jobs:
           compression-level: 0
 
   sign:
-    needs: build
+    needs: [build, check]
     if: github.ref_name == github.event.repository.default_branch
     outputs:
-      snapshot_created: ${{ steps.merge.outputs.merged }}
+      snapshot_created: ${{ steps.snapshot.outputs.created }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release
@@ -350,78 +299,44 @@ jobs:
         env:
           ABUILD_PRIVATE_KEY: ${{ secrets.ABUILD_PRIVATE_KEY }}
         run: |
-          # --network none keeps the repository signing key away from anything
-          # that could exfiltrate it. Signing is architecture-independent, so
-          # one runner signs both trees.
+          # The private key is mounted only into the network-isolated signer.
+          private_key="$RUNNER_TEMP/repository-signing-key"
+          printf '%s\n' "$ABUILD_PRIVATE_KEY" > "$private_key"
+          chmod 600 "$private_key"
+          trap 'rm -f "$private_key"' EXIT
           docker run --rm --network none \
-            -e ABUILD_PRIVATE_KEY \
             -v "$RUNNER_TEMP/pages:/pages" \
+            -v "$private_key:/private-key:ro" \
             -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \
-            apkbuilds-signer sh -euxc '
-              umask 077
-              set +x
-              printf "%s\n" "$ABUILD_PRIVATE_KEY" > /tmp/apkbuilds.rsa
-              unset ABUILD_PRIVATE_KEY
-              set -x
-              trap "rm -f /tmp/apkbuilds.rsa" EXIT
-              cp /keys/apkbuilds.rsa.pub /etc/apk/keys/
-              for arch in x86_64 aarch64; do
-                apk_repository="/pages/edge/$arch"
-                test -d "$apk_repository" || continue
-                for package in "$apk_repository"/*.apk; do
-                  # Already-published packages carry a valid signature.
-                  apk verify "$package" && continue
-                  work=$(mktemp -d)
-                  (
-                    cd "$work"
-                    abuild-gzsplit < "$package"
-                    abuild-sign -q -t RSA256 \
-                      -k /tmp/apkbuilds.rsa \
-                      -p /keys/apkbuilds.rsa.pub \
-                      control.tar.gz
-                    cat control.tar.gz data.tar.gz > "$package"
-                  )
-                  rm -rf "$work"
-                done
-                cd "$apk_repository"
-                rm -f APKINDEX.tar.gz Packages.adb
-                apk index --no-warnings --quiet \
-                  --output APKINDEX.tar.gz \
-                  --rewrite-arch "$arch" \
-                  ./*.apk
-                abuild-sign -q -t RSA256 \
-                  -k /tmp/apkbuilds.rsa \
-                  -p /keys/apkbuilds.rsa.pub \
-                  APKINDEX.tar.gz
-              done
-            '
+            -v "$GITHUB_WORKSPACE/scripts/sign-repository.sh:/sign-repository.sh:ro" \
+            apkbuilds-signer \
+              /sign-repository.sh \
+                --pages /pages \
+                --repository-key /keys/apkbuilds.rsa.pub \
+                --private-key-file /private-key
       - name: Verify the APK repository without the private key
-        if: steps.merge.outputs.merged == 'true'
+        if: >-
+          steps.merge.outputs.merged == 'true' ||
+          needs.check.outputs.reconcile == 'true'
         run: |
           docker run --rm --network none \
             -v "$RUNNER_TEMP/pages:/pages:ro" \
-            -v "$GITHUB_WORKSPACE/scripts/lib.sh:/scripts/lib.sh:ro" \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
             -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \
-            alpine:edge sh -euxc '
-              . /scripts/lib.sh
-              cp /keys/apkbuilds.rsa.pub /etc/apk/keys/
-              for arch in x86_64 aarch64; do
-                apk_repository="/pages/edge/$arch"
-                test -d "$apk_repository" || continue
-                apk verify "$apk_repository/APKINDEX.tar.gz"
-                apk verify "$apk_repository"/*.apk
-                work=$(mktemp -d)
-                tar -xOzf "$apk_repository/APKINDEX.tar.gz" APKINDEX \
-                  > "$work/APKINDEX"
-                apkindex_apks "$work/APKINDEX" > "$work/indexed"
-                find "$apk_repository" -maxdepth 1 -type f -name "*.apk" \
-                  -exec basename {} \; > "$work/physical"
-                package_sets_equal "$work/indexed" "$work/physical"
-                rm -rf "$work"
-              done
-            '
+            alpine:edge \
+              /workspace/scripts/verify-repository.sh \
+                --pages /pages \
+                --workspace /workspace \
+                --arch all \
+                --repository-key /keys/apkbuilds.rsa.pub
+      - name: Mark snapshot for verification
+        id: snapshot
+        if: >-
+          steps.merge.outputs.merged == 'true' ||
+          needs.check.outputs.reconcile == 'true'
+        run: echo 'created=true' >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        if: steps.merge.outputs.merged == 'true'
+        if: steps.snapshot.outputs.created == 'true'
         with:
           name: signed-repository
           # include-hidden-files is needed for .nojekyll, which also drags in
@@ -461,31 +376,56 @@ jobs:
           docker run --rm \
             -v "$RUNNER_TEMP/pages:/pages:ro" \
             -v "$GITHUB_WORKSPACE:/workspace:ro" \
-            -w /workspace \
-            alpine:edge sh -euxc '
-              . scripts/lib.sh
-              cp /pages/apkbuilds.rsa.pub \
-                /etc/apk/keys/apkbuilds.rsa.pub
-              echo "/pages/edge" >> /etc/apk/repositories
-              set -- apk add
-              for origin in $(all_origins); do
-                supports_arch "${{ matrix.arch }}" \
-                  "packages/$origin/APKBUILD" || continue
-                set -- "$@" "$(apkbuild_pinned_spec "packages/$origin")"
-              done
-              for delay in 0 5 10 20 40 60; do
-                sleep "$delay"
-                apk update && "$@" && exit 0
-              done
-              exit 1
-            '
+            -v "$GITHUB_WORKSPACE/keys/apkbuilds.rsa.pub:/keys/apkbuilds.rsa.pub:ro" \
+            alpine:edge \
+              /workspace/scripts/verify-repository.sh \
+                --pages /pages \
+                --workspace /workspace \
+                --arch "${{ matrix.arch }}" \
+                --repository-key /keys/apkbuilds.rsa.pub \
+                --install-declared-builds
 
-  publish:
-    needs: verify
+
+  # This is the stable required check for pull requests. It validates the
+  # dynamic jobs without pretending that a pull request publishes anything.
+  ci:
+    if: always()
+    needs: [check, build, sign, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    permissions:
-      contents: write
+    steps:
+      - name: Check required CI results
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          HAS_ORIGINS: ${{ needs.check.outputs.has_origins }}
+          CHECK: ${{ needs.check.result }}
+          BUILD: ${{ needs.build.result }}
+          SIGN: ${{ needs.sign.result }}
+          VERIFY: ${{ needs.verify.result }}
+        run: |
+          status=0
+          test "$CHECK" = success || status=1
+          if [ "$HAS_ORIGINS" = true ]; then
+            test "$BUILD" = success || status=1
+          fi
+          if [ "$EVENT" = pull_request ] || [ "$REF" != "$DEFAULT_BRANCH" ] || \
+             [ "$HAS_ORIGINS" != true ]; then
+            exit "$status"
+          fi
+          test "$SIGN" = success || status=1
+          test "$VERIFY" = success || status=1
+          exit "$status"
+
+  publish:
+    needs: [ci, sign, verify]
+    if: >-
+      github.ref_name == github.event.repository.default_branch &&
+      needs.ci.result == 'success' && needs.sign.result == 'success' &&
+      needs.verify.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -493,7 +433,7 @@ jobs:
           path: pages
       - name: Push the APK repository to gh-pages
         env:
-          GH_TOKEN: ${{ github.token }}
+          PAGES_DEPLOY_KEY: ${{ secrets.PAGES_DEPLOY_KEY }}
         run: |
           cd pages
           # The artifact comes from a clone, so drop any Git metadata
@@ -502,8 +442,11 @@ jobs:
           git init -q --initial-branch=gh-pages
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git remote add origin \
-            "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git"
+          printf '%s\n' "$PAGES_DEPLOY_KEY" > "$RUNNER_TEMP/pages-deploy-key"
+          chmod 600 "$RUNNER_TEMP/pages-deploy-key"
+          trap 'rm -f "$RUNNER_TEMP/pages-deploy-key"' EXIT
+          export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/pages-deploy-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git remote add origin "git@github.com:$GITHUB_REPOSITORY.git"
           git add -A
           # A single orphan commit keeps the branch from accumulating the
           # history of every .apk ever published.

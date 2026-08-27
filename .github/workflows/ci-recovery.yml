@@ -1,0 +1,45 @@
+name: CI recovery
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+# Rerunning a failed publication only needs Actions API access. In particular,
+# this workflow never receives repository contents or either publication key.
+permissions:
+  actions: write
+
+jobs:
+  retry-publication:
+    if: >-
+      github.event.workflow_run.name == 'CI' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt < 3 &&
+      github.event.workflow_run.head_branch == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Retry failed publication jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          failed_jobs="$RUNNER_TEMP/failed-jobs"
+          gh run view "$RUN_ID" --json jobs --jq \
+            '[.jobs[] | select(.conclusion == "failure") | .name] | .[]' \
+            > "$failed_jobs"
+          publication_failed=false
+          non_publication_failed=false
+          while IFS= read -r job; do
+            [ -n "$job" ] || continue
+            case "$job" in
+              publish) publication_failed=true ;;
+              *) non_publication_failed=true ;;
+            esac
+          done < "$failed_jobs"
+          if [ "$publication_failed" != true ] || \
+             [ "$non_publication_failed" = true ]; then
+            echo 'Skipping recovery because the failure was not publication-only'
+            exit 0
+          fi
+          gh run rerun "$RUN_ID" --failed

@@ -1,14 +1,24 @@
 # Build package origins incrementally and independently
 
-Only package origins whose package inputs have changed since the last push to
-main enter the build pipeline; every version-controlled file below an origin,
-including patches and service init scripts, is a package input that must advance
-the declared build (ADR-0001), while full and scheduled runs reconcile all
-origins. Planning runs independently from
-repository checks, but each architecture and package-origin build waits for
-both; builds restore the latest compatible compiler-cache snapshot scoped by
-architecture, package origin, and runner operating system, then save a unique
-snapshot because GitHub Actions cache entries are immutable. These choices
-keep ordinary runs incremental and parallel without weakening published-build
-immutability (ADR-0001), signing isolation (ADR-0002), or atomic package-family
-publication (ADR-0006).
+CI selects only package origins whose inputs changed since the last push to
+`main`, while full and scheduled runs reconcile all package origins; every
+input below a package origin must advance its declared build to preserve the immutability of
+the published build (ADR-0001). Diff, range, revision, and explicit manual selections
+must resolve to valid package origins before matrix expansion, validation and
+planning share one checkout and job, and compiler-cache snapshots remain scoped
+and immutable per architecture, package origin, runner, and toolchain. Scheduled
+and manual
+reconciliation compares every declared package family with the published
+repository snapshot; after an updater changes `main`, its publication dispatch
+has an additional bounded reconciliation attempt if the initial dispatch
+fails, while CI recovery retries only final branch publication failures.
+
+## Consequences
+
+Ordinary runs remain incremental and parallel without weakening signing
+isolation (ADR-0002) or atomic package-family publication (ADR-0006); validation,
+build, signing, and verification failures remain visible rather than being
+silently retried. The manually dispatched `CI cache benchmark` workflow
+measures the Rust-heavy `orbien` package origin once with empty compiler caches
+and once with shared caches, recording build time, cache size, and compiler
+cache statistics.
