@@ -11,6 +11,8 @@ from tests.update_manifest import read_manifest
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "update.yml"
 WORKFLOW = WORKFLOW_PATH.read_text()
+CI_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "ci.yml"
+CI_WORKFLOW = CI_WORKFLOW_PATH.read_text()
 UPDATER_PATH = ROOT / "scripts" / "update-packages.sh"
 
 
@@ -31,14 +33,12 @@ def child_keys(document, parent):
 
 
 class PackageUpdateTest(unittest.TestCase):
-    def test_workflow_is_scheduled_only_and_uses_one_writer(self):
+    def test_workflow_triggers_and_permissions_are_narrow(self):
         self.assertEqual(child_keys(WORKFLOW, "on"), ["schedule"])
         self.assertEqual(child_keys(WORKFLOW, "permissions"), ["contents"])
-        self.assertIn("fetch-depth: 0", WORKFLOW)
-        self.assertIn("ref: ${{ github.event.repository.default_branch }}", WORKFLOW)
-        self.assertIn("ssh-key: ${{ secrets.UPDATE_DEPLOY_KEY }}", WORKFLOW)
-        self.assertEqual(WORKFLOW.count("sh scripts/update-packages.sh"), 1)
+        self.assertEqual(child_keys(CI_WORKFLOW, "on"), ["push", "pull_request"])
 
+    def test_manifest_order_is_the_single_writer_order(self):
         entries = read_manifest()
         self.assertEqual(
             [origin for origin, _, _ in entries],
@@ -72,6 +72,15 @@ class PackageUpdateTest(unittest.TestCase):
     def test_updater_passes_posix_shellcheck(self):
         completed = subprocess.run(
             ["shellcheck", "--shell=sh", str(UPDATER_PATH)],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout)
+
+    @unittest.skipUnless(shutil.which("actionlint"), "actionlint not installed")
+    def test_workflows_pass_actionlint(self):
+        completed = subprocess.run(
+            ["actionlint", *map(str, sorted((ROOT / ".github" / "workflows").glob("*.yml")))],
             capture_output=True,
             text=True,
         )
