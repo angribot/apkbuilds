@@ -142,39 +142,7 @@ package_sets_equal() {
   ' "$1" "$2"
 }
 
-# Retry transient APK index acquisition only. Package resolution and
-# installation are deliberately outside this loop because resolver failures
-# are deterministic. The output check avoids retrying bad signatures, malformed
-# indexes, and repository configuration errors.
-#   apk_update_with_retry
-apk_update_with_retry() {
-  _aur_delays=${APK_UPDATE_RETRY_DELAYS:-0 5 10 20 40 60}
-  _aur_attempt=0
-  for _aur_delay in $_aur_delays; do
-    _aur_attempt=$((_aur_attempt + 1))
-    [ "$_aur_delay" -eq 0 ] || sleep "$_aur_delay"
-    _aur_output=$(mktemp)
-    if apk update > "$_aur_output" 2>&1; then
-      cat "$_aur_output"
-      rm -f "$_aur_output"
-      return 0
-    fi
-    cat "$_aur_output" >&2
-    if ! grep -Eiq \
-      'temporary error|try again|timed out|timeout|network|connection (refused|reset|timed out)|could not resolve|no route to host' \
-      "$_aur_output"; then
-      rm -f "$_aur_output"
-      printf 'apk index retrieval failed without retry\n' >&2
-      return 1
-    fi
-    rm -f "$_aur_output"
-    printf 'apk index retrieval attempt %s failed\n' "$_aur_attempt" >&2
-  done
-  return 1
-}
-
-# Install one exact package-origin build and log the identity on failure. This
-# command is intentionally not part of apk_update_with_retry's retry loop.
+# Install one exact package-origin build and log the identity on failure.
 #   apk_add_pinned_origin <arch> <origin> <declared-build> <published-builds> <spec>
 apk_add_pinned_origin() {
   _apo_arch=$1

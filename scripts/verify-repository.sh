@@ -1,139 +1,72 @@
 #!/bin/sh
-# shellcheck disable=SC1091
-# Verify staged APK repository trees and optionally install every declared
-# build. The caller controls networking: CI runs signature-only verification
-# offline and retains network access only for installation dependencies.
+# Verify a staged repository snapshot behind the CI container seam.
 set -eu
 
 usage() {
-  cat >&2 <<'USAGE'
-usage: verify-repository.sh --pages DIR --workspace DIR --arch ARCH|all \
-  --repository-key FILE [--install-declared-builds] [--key-directory DIR] \
-  [--repositories-file FILE]
-USAGE
+  printf '%s\n' \
+    'usage: verify-repository.sh --arch ARCH|all [--install-declared-builds]'
 }
 
-pages=
-workspace=
-requested_arch=
-repository_key=
+arch=
 install_declared_builds=false
-key_directory=/etc/apk/keys
-repositories_file=/etc/apk/repositories
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --pages|--workspace|--arch|--repository-key)
-      [ "$#" -ge 2 ] || { usage; exit 2; }
-      case "$1" in
-        --pages) pages=$2 ;;
-        --workspace) workspace=$2 ;;
-        --arch) requested_arch=$2 ;;
-        --repository-key) repository_key=$2 ;;
-      esac
+    --arch)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      arch=$2
       shift 2
       ;;
     --install-declared-builds)
       install_declared_builds=true
       shift
       ;;
-    --key-directory|--repositories-file)
-      [ "$#" -ge 2 ] || { usage; exit 2; }
-      case "$1" in
-        --key-directory) key_directory=$2 ;;
-        --repositories-file) repositories_file=$2 ;;
-      esac
-      shift 2
-      ;;
     --help)
-      usage >&1
+      usage
       exit 0
       ;;
     *)
-      usage
+      usage >&2
       exit 2
       ;;
   esac
 done
-
-[ -n "$pages" ] && [ -n "$workspace" ] && \
-  [ -n "$requested_arch" ] && [ -n "$repository_key" ] || {
-  usage
-  exit 2
-}
-case "$requested_arch" in
+case "$arch" in
   x86_64|aarch64|all) ;;
-  *) usage; exit 2 ;;
+  *) usage >&2; exit 2 ;;
 esac
 
-arch=all
+workspace=${GITHUB_WORKSPACE:-$(CDPATH='' cd "$(dirname "$0")/.." && pwd)}
+runner_temp=${RUNNER_TEMP:-}
+[ -n "$runner_temp" ] || {
+  printf '%s\n' 'RUNNER_TEMP is required' >&2
+  exit 2
+}
+pages=$runner_temp/pages
+repository_key=$workspace/keys/apkbuilds.rsa.pub
 origin=all
-stage=arguments
-work=
+stage=container
 failure() {
   status=$?
   if [ "$status" -ne 0 ]; then
     printf '::error::verify stage=%s arch=%s package-origin=%s exit=%s\n' \
       "$stage" "$arch" "$origin" "$status" >&2
   fi
-  [ -z "$work" ] || rm -rf "$work"
   exit "$status"
 }
 trap failure EXIT
 
-. "$workspace/scripts/lib.sh"
-
-verify_arch() {
-  arch=$1
-  origin=all
-  apk_repository="$pages/edge/$arch"
-  [ -d "$apk_repository" ] || return 0
-
-  stage=signature
-  mkdir -p "$key_directory"
-  cp "$repository_key" "$key_directory/apkbuilds.rsa.pub"
-  apk verify "$apk_repository/APKINDEX.tar.gz"
-  apk verify "$apk_repository"/*.apk
-  work=$(mktemp -d)
-  index="$work/APKINDEX"
-  tar -xOzf "$apk_repository/APKINDEX.tar.gz" APKINDEX > "$index"
-  apkindex_apks "$index" > "$work/indexed"
-  find "$apk_repository" -maxdepth 1 -type f -name '*.apk' \
-    -exec basename {} \; > "$work/physical"
-  package_sets_equal "$work/indexed" "$work/physical"
-
-  if [ "$install_declared_builds" != true ]; then
-    rm -rf "$work"
-    work=
-    return 0
-  fi
-  echo "/pages/edge" >> "$repositories_file"
-  stage=index
-  if ! apk_update_with_retry; then
-    printf '::error::verify stage=index arch=%s package-origin=all declared-builds=all published-builds=unknown\n' \
-      "$arch" >&2
-    exit 1
-  fi
-
-  stage=install
-  cd "$workspace"
-  for origin in $(all_origins); do
-    supports_arch "$arch" "$workspace/packages/$origin/APKBUILD" || continue
-    declared=$(apkbuild_declared_build "$workspace/packages/$origin")
-    versions="$work/published-versions-$origin"
-    apkindex_origin_versions "$index" "$origin" > "$versions"
-    published_builds=$(format_published_builds "$versions")
-    spec=$(apkbuild_pinned_spec "$workspace/packages/$origin")
-    apk_add_pinned_origin \
-      "$arch" "$origin" "$declared" "$published_builds" "$spec"
-  done
-  rm -rf "$work"
-  work=
-}
-
-case "$requested_arch" in
-  all)
-    verify_arch x86_64
-    verify_arch aarch64
-    ;;
-  *) verify_arch "$requested_arch" ;;
-esac
+set -- docker run --rm
+if [ "$install_declared_builds" != true ]; then
+  set -- "$@" --network none
+fi
+set -- "$@" \
+  -v "$pages:/pages:ro" \
+  -v "$workspace:/workspace:ro" \
+  -v "$repository_key:/keys/apkbuilds.rsa.pub:ro" \
+  alpine:edge \
+    /workspace/scripts/operations/verify-repository.sh \
+      --arch "$arch"
+if [ "$install_declared_builds" = true ]; then
+  set -- "$@" --install-declared-builds
+fi
+"$@"
