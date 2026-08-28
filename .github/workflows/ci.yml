@@ -191,16 +191,18 @@ jobs:
           metrics="$RUNNER_TEMP/new/metrics/${{ matrix.arch }}/${{ matrix.origin }}/build.txt"
           if [ -f "$metrics" ]; then
             if [ -n "$CACHE_MATCHED_KEY" ]; then
-              echo 'build_mode=warm' >> "$metrics"
+              build_mode=warm
             else
-              echo 'build_mode=cold' >> "$metrics"
+              build_mode=cold
             fi
+            printf 'build_mode=%s\n' "$build_mode"
             cat "$metrics"
             {
               echo '### Compiler cache metrics'
               echo
               echo "cache_exact_hit=$CACHE_HIT"
               echo "cache_restore_key=$CACHE_MATCHED_KEY"
+              printf 'build_mode=%s\n' "$build_mode"
               cat "$metrics"
             } >> "$GITHUB_STEP_SUMMARY"
           else

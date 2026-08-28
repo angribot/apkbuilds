@@ -63,10 +63,11 @@ jobs:
                   --sccache-dir /home/builder/.cache/sccache \
                   --force-build
             metrics="$output/metrics/$ARCH/$ORIGIN/build.txt"
-            printf 'build_mode=%s\n' "$mode" >> "$metrics"
+            printf 'build_mode=%s\n' "$mode"
             {
               echo "### Orbien $mode compiler-cache measurement"
               echo
+              printf 'build_mode=%s\n' "$mode"
               cat "$metrics"
             } >> "$GITHUB_STEP_SUMMARY"
             cat "$metrics"
