@@ -36,18 +36,28 @@ jobs:
           ref: ${{ github.sha }}
       - name: Trust the workspace
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Plan package origins
+        id: set-matrix
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          REVISION: ${{ github.sha }}
+        run: sh scripts/plan-origins.sh
       - name: Create the builder user
         # `abuild` refuses to run as root, and the container's only user is
         # root. The checkout is readable by builder and must not be re-owned.
         run: . scripts/prepare-builder.sh
       - name: Lint APKBUILDs
+        env:
+          ORIGINS: ${{ steps.set-matrix.outputs.origins }}
         run: |
           # Feed the script over stdin: nesting it inside `su -c '...'` would
           # need a second layer of quoting for every expansion.
           su builder -s /bin/sh <<'LINT'
           . scripts/lib.sh
           status=0
-          for origin in $(all_origins); do
+          for origin in $ORIGINS; do
             assert_origin_directory "packages/$origin" || status=1
             printf '==> linting %s\n' "$origin"
             (
@@ -73,15 +83,6 @@ jobs:
         # Publication skips a complete declared package family, so an edit
         # that forgets to bump pkgrel would never reach users.
         run: sh scripts/check-declared-build.sh
-      - name: Plan package origins
-        id: set-matrix
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-          BEFORE: ${{ github.event.before }}
-          REVISION: ${{ github.sha }}
-        run: sh scripts/plan-origins.sh
-
   build:
     needs: check
     if: needs.check.outputs.has_origins == 'true'

@@ -75,6 +75,13 @@ for origin in $origins; do
   fi
 done
 
+selected_origins=
+for origin in $origins; do
+  [ -n "$selected_origins" ] && selected_origins="$selected_origins "
+  selected_origins="$selected_origins$origin"
+done
+printf 'origins=%s\n' "$selected_origins" >> "$GITHUB_OUTPUT"
+
 matrix_items=
 for origin in $origins; do
   for arch in x86_64 aarch64; do

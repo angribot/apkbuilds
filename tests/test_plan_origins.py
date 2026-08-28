@@ -121,7 +121,9 @@ class PlanOriginsTest(unittest.TestCase):
             before=self.ci_fix_commit,
         )
 
+        outputs = self.plan_outputs(completed)
         entries = self.matrix_entries(completed)
+        self.assertEqual(outputs["origins"], "alpha beta")
         self.assertEqual(
             {(item["origin"], item["arch"]) for item in entries},
             {
@@ -139,7 +141,9 @@ class PlanOriginsTest(unittest.TestCase):
             before=self.alpha_commit,
         )
 
+        outputs = self.plan_outputs(completed)
         entries = self.matrix_entries(completed)
+        self.assertEqual(outputs["origins"], "alpha beta")
         self.assertEqual(
             {item["origin"] for item in entries},
             {"alpha", "beta"},
@@ -152,7 +156,9 @@ class PlanOriginsTest(unittest.TestCase):
             base=self.initial,
         )
 
+        outputs = self.plan_outputs(completed)
         entries = self.matrix_entries(completed)
+        self.assertEqual(outputs["origins"], "alpha")
         self.assertEqual(
             {(item["origin"], item["arch"]) for item in entries},
             {("alpha", "x86_64"), ("alpha", "aarch64")},
@@ -167,6 +173,7 @@ class PlanOriginsTest(unittest.TestCase):
 
         outputs = self.plan_outputs(completed)
         self.assertEqual(outputs["has_origins"], "false")
+        self.assertEqual(outputs["origins"], "")
         self.assertEqual(json.loads(outputs["matrix"]), {"include": []})
 
     def test_auxiliary_package_input_selects_its_origin(self):
