@@ -1,5 +1,5 @@
 pkgname=realm
-pkgver=2.9.4
+pkgver=2.9.5
 pkgrel=0
 pkgdesc="A simple, high performance relay server written in Rust"
 url="https://github.com/zhboner/realm"
@@ -10,10 +10,10 @@ subpackages="$pkgname-openrc"
 
 case "$CARCH" in
 x86_64)
-	_sha512="59b45b8b6114980e9cbf2a38bb6ec366b1486333511790a975bef992359ef322cd9ea8212a82d26eb2775a3690dbfde720e71874da1a59f3044815caf9a0a23d"
+	_sha512="620f56e56ab613157857cefce440765f7119c56bf284c23c68081d2649c9d6421fd016e250e13d79d46d62bd8a267a1d9d69cf9ff65b30a42f069a4bd2c789ca"
 	;;
 aarch64)
-	_sha512="4e46e4880f6929898d1f9f2d03edba20e496196cf3b8dafffec392e6889868d237ecb3d152e222a5f0b13763c9ae782a3cd181b20cdd809444a25aa5edf8736e"
+	_sha512="a82eb9d3a35b42520ab1c792349b16c71c8f0557be1eacf48f120e5135169b7dc95fa4df281180e63da821b3fda1d976ad8aeb78a2ac941f38754e19451d42db"
 	;;
 esac
 # Only the architectures above are supported; a stale _sha512 would
