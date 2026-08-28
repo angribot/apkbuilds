@@ -5,8 +5,8 @@ Linux edge. Each package origin defines whether it is built from source or uses
 authenticated upstream binaries.
 
 Project-supported architectures: `x86_64` and `aarch64`. Each package family
-is published atomically per architecture. An origin-unsupported architecture
-retains its previous available build.
+is published atomically per architecture. Published package origins cannot be
+removed or narrowed to fewer architectures.
 
 ## Add the APK repository
 

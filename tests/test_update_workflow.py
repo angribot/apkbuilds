@@ -50,32 +50,15 @@ class PackageUpdateTest(unittest.TestCase):
                     self.assertNotEqual(test, "-")
                     self.assertTrue((ROOT / test).is_file(), test)
 
-    def test_workflow_dispatches_one_publication_for_successful_updates(self):
-        self.assertIn("GH_TOKEN: ${{ github.token }}", WORKFLOW)
+    def test_main_push_is_the_only_publication_trigger(self):
         self.assertIn("GITHUB_TOKEN: ${{ github.token }}", WORKFLOW)
         self.assertIn("contents: write", WORKFLOW)
-        self.assertIn("actions: write", WORKFLOW)
-        self.assertIn("has_updates=1", UPDATER)
-        self.assertIn("final_commit=$(git rev-parse origin/main)", UPDATER)
-        self.assertIn("gh workflow run ci.yml --ref main", UPDATER)
-        self.assertIn(
-            'dispatch_publication "$initial_commit" "$final_commit"', UPDATER
-        )
-        self.assertIn(
-            '-f base_revision="$_dp_initial_commit"', UPDATER
-        )
-        self.assertIn("DISPATCH_ATTEMPTS=3", UPDATER)
-        self.assertIn('while [ "$_dp_attempt" -le "$DISPATCH_ATTEMPTS" ]', UPDATER)
-        self.assertIn("could not dispatch CI publication", UPDATER)
-        self.assertIn("publication_dispatch_failed=true", UPDATER)
-        self.assertIn("id: update", WORKFLOW)
-        self.assertIn(
-            "if: failure() && steps.update.outputs.publication_dispatch_failed == 'true'",
-            WORKFLOW,
-        )
-        self.assertIn("for attempt in 1 2 3", WORKFLOW)
-        self.assertIn("gh workflow run ci.yml --ref main -f full=false", WORKFLOW)
-        self.assertIn("reconciliation dispatch attempt", WORKFLOW)
+        self.assertNotIn("actions: write", WORKFLOW)
+        self.assertNotIn("gh workflow run ci.yml", WORKFLOW)
+        self.assertNotIn("gh workflow run ci.yml", UPDATER)
+        self.assertNotIn("dispatch_publication", UPDATER)
+        self.assertNotIn("publication_dispatch", WORKFLOW)
+        self.assertNotIn("publication_dispatch", UPDATER)
 
     def test_workflow_stages_each_apkbuild_and_never_force_pushes(self):
         self.assertIn('git diff --quiet -- "$_pu_apkbuild"', UPDATER)

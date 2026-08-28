@@ -1,4 +1,4 @@
-"""Behavior tests for the CI package-origin planning seam."""
+"""Behavior tests for the CI repository-reconciliation planning seam."""
 
 import json
 import os
@@ -13,10 +13,10 @@ PLAN = ROOT / "scripts" / "plan-origins.sh"
 
 
 class PlanOriginsTest(unittest.TestCase):
-    def git(self, cwd, *args):
+    def git(self, *args):
         return subprocess.run(
             ["git", *args],
-            cwd=cwd,
+            cwd=self.root,
             check=True,
             capture_output=True,
             text=True,
@@ -33,61 +33,57 @@ class PlanOriginsTest(unittest.TestCase):
 
         for origin in ("alpha", "beta"):
             self.write_apkbuild(origin, "1.0.0")
-        self.git(self.root, "init", "-q", "-b", "main")
-        self.git(self.root, "config", "user.name", "test")
-        self.git(self.root, "config", "user.email", "test@example.com")
-        self.git(self.root, "config", "commit.gpgsign", "false")
+        self.git("init", "-q", "-b", "main")
+        self.git("config", "user.name", "test")
+        self.git("config", "user.email", "test@example.com")
+        self.git("config", "commit.gpgsign", "false")
         self.commit("initial", "packages")
-        self.initial = self.git(self.root, "rev-parse", "HEAD").stdout.strip()
+        self.initial = self.revision()
 
         self.write_apkbuild("alpha", "2.0.0")
         self.commit("update alpha", "packages/alpha/APKBUILD")
-        self.alpha_commit = self.git(self.root, "rev-parse", "HEAD").stdout.strip()
+        self.alpha_commit = self.revision()
+
+        (self.root / ".github" / "workflows").mkdir(parents=True)
+        (self.root / ".github" / "workflows" / "ci.yml").write_text(
+            "name: fixed CI\n"
+        )
+        self.commit("fix CI", ".github/workflows/ci.yml")
+        self.ci_fix_commit = self.revision()
 
         self.write_apkbuild("beta", "2.0.0")
         self.commit("update beta", "packages/beta/APKBUILD")
-        self.beta_commit = self.git(self.root, "rev-parse", "HEAD").stdout.strip()
+        self.beta_commit = self.revision()
 
-        self.git(self.root, "switch", "-q", "-c", "feature", self.initial)
-        self.write_apkbuild("alpha", "3.0.0")
-        self.commit("feature alpha", "packages/alpha/APKBUILD")
-        self.feature_commit = self.git(self.root, "rev-parse", "HEAD").stdout.strip()
-        self.git(self.root, "switch", "-q", "main")
         (self.root / "packages" / "alpha" / "fix.patch").write_text(
             "updated packaging input\n"
         )
         self.commit("change alpha patch", "packages/alpha/fix.patch")
-        self.auxiliary_commit = self.git(self.root, "rev-parse", "HEAD").stdout.strip()
+        self.auxiliary_commit = self.revision()
+
         self.git(
-            self.root,
             "mv",
             "packages/alpha/fix.patch",
             "packages/beta/fix.patch",
         )
-        self.git(self.root, "commit", "-q", "-m", "rename alpha patch")
-        self.rename_commit = self.git(self.root, "rev-parse", "HEAD").stdout.strip()
+        self.git("commit", "-q", "-m", "move package input")
+        self.move_commit = self.revision()
 
-    def write_apkbuild(self, origin, version):
+    def revision(self):
+        return self.git("rev-parse", "HEAD").stdout.strip()
+
+    def write_apkbuild(self, origin, version, arch=None):
+        architecture = "" if arch is None else f'arch="{arch}"\n'
         (self.root / "packages" / origin / "APKBUILD").write_text(
-            f"pkgname={origin}\npkgver={version}\npkgrel=0\n"
+            f"pkgname={origin}\npkgver={version}\npkgrel=0\n{architecture}"
         )
 
     def commit(self, message, path):
-        self.git(self.root, "add", path)
-        self.git(self.root, "commit", "-q", "-m", message)
+        self.git("add", path)
+        self.git("commit", "-q", "-m", message)
 
-    def run_plan(
-        self,
-        *,
-        revision,
-        base_revision="",
-        full="false",
-        explicit_revision="true",
-        selected_origins="",
-        event="workflow_dispatch",
-        base="",
-        before="",
-    ):
+    def run_plan(self, *, event, revision, base="", before=""):
+        self.git("switch", "-q", "--detach", revision)
         output = self.root / "output"
         runner_temp = self.root / "runner-temp"
         runner_temp.mkdir(exist_ok=True)
@@ -95,14 +91,9 @@ class PlanOriginsTest(unittest.TestCase):
         env.update(
             {
                 "EVENT": event,
-                "FULL": full,
                 "BASE": base,
                 "BEFORE": before,
                 "REVISION": revision,
-                "BASE_REVISION": base_revision,
-                "EXPLICIT_REVISION": explicit_revision,
-                "MAIN_REVISION": "main",
-                "SELECTED_ORIGINS": selected_origins,
                 "RUNNER_TEMP": str(runner_temp),
                 "GITHUB_OUTPUT": str(output),
             }
@@ -120,57 +111,19 @@ class PlanOriginsTest(unittest.TestCase):
         output = self.root / "output"
         return dict(line.split("=", 1) for line in output.read_text().splitlines())
 
-    def test_manual_dispatch_spans_all_updates_since_explicit_base(self):
+    def matrix_entries(self, completed):
+        return json.loads(self.plan_outputs(completed)["matrix"])["include"]
+
+    def test_main_push_reconciles_every_supported_declared_build(self):
         completed = self.run_plan(
+            event="push",
             revision=self.beta_commit,
-            base_revision=self.initial,
+            before=self.ci_fix_commit,
         )
 
-        outputs = self.plan_outputs(completed)
-        matrix = json.loads(outputs["matrix"])
+        entries = self.matrix_entries(completed)
         self.assertEqual(
-            {item["origin"] for item in matrix["include"]}, {"alpha", "beta"}
-        )
-        self.assertEqual(outputs["has_origins"], "true")
-        self.assertEqual(outputs["reconcile"], "false")
-
-    def test_manual_dispatch_defaults_to_selected_revision_parent(self):
-        completed = self.run_plan(revision=self.beta_commit)
-
-        outputs = self.plan_outputs(completed)
-        matrix = json.loads(outputs["matrix"])
-        self.assertEqual({item["origin"] for item in matrix["include"]}, {"beta"})
-        self.assertEqual(outputs["reconcile"], "false")
-
-    def test_auxiliary_package_input_selects_its_origin(self):
-        completed = self.run_plan(
-            revision=self.auxiliary_commit,
-            base_revision=self.beta_commit,
-        )
-
-        outputs = self.plan_outputs(completed)
-        matrix = json.loads(outputs["matrix"])
-        self.assertEqual(
-            {
-                (item["origin"], item["arch"])
-                for item in matrix["include"]
-            },
-            {("alpha", "x86_64"), ("alpha", "aarch64")},
-        )
-
-    def test_renamed_package_input_selects_both_origins(self):
-        completed = self.run_plan(
-            revision=self.rename_commit,
-            base_revision=self.auxiliary_commit,
-        )
-
-        outputs = self.plan_outputs(completed)
-        matrix = json.loads(outputs["matrix"])
-        self.assertEqual(
-            {
-                (item["origin"], item["arch"])
-                for item in matrix["include"]
-            },
+            {(item["origin"], item["arch"]) for item in entries},
             {
                 ("alpha", "x86_64"),
                 ("alpha", "aarch64"),
@@ -179,137 +132,114 @@ class PlanOriginsTest(unittest.TestCase):
             },
         )
 
-    def test_manual_dispatch_without_selection_reconciles_every_origin(self):
+    def test_ci_only_main_fix_reconsiders_an_earlier_unpublished_origin(self):
         completed = self.run_plan(
-            revision=self.beta_commit,
-            explicit_revision="false",
+            event="push",
+            revision=self.ci_fix_commit,
+            before=self.alpha_commit,
         )
 
-        outputs = self.plan_outputs(completed)
-        self.assertEqual(outputs["reconcile"], "true")
-        matrix = json.loads(outputs["matrix"])
+        entries = self.matrix_entries(completed)
         self.assertEqual(
-            {item["origin"] for item in matrix["include"]}, {"alpha", "beta"}
+            {item["origin"] for item in entries},
+            {"alpha", "beta"},
         )
 
-    def test_full_manual_dispatch_plans_every_origin(self):
-        completed = self.run_plan(revision=self.beta_commit, full="true")
-
-        outputs = self.plan_outputs(completed)
-        self.assertEqual(outputs["reconcile"], "true")
-        matrix = json.loads(outputs["matrix"])
-        self.assertEqual(
-            {item["origin"] for item in matrix["include"]}, {"alpha", "beta"}
-        )
-
-    def test_no_changed_origins_is_a_visible_no_op(self):
+    def test_pull_request_selects_only_changed_package_origins(self):
         completed = self.run_plan(
-            revision=self.initial,
-            base_revision=self.initial,
+            event="pull_request",
+            revision=self.alpha_commit,
+            base=self.initial,
+        )
+
+        entries = self.matrix_entries(completed)
+        self.assertEqual(
+            {(item["origin"], item["arch"]) for item in entries},
+            {("alpha", "x86_64"), ("alpha", "aarch64")},
+        )
+
+    def test_automation_only_pull_request_is_a_visible_no_op(self):
+        completed = self.run_plan(
+            event="pull_request",
+            revision=self.ci_fix_commit,
+            base=self.alpha_commit,
         )
 
         outputs = self.plan_outputs(completed)
         self.assertEqual(outputs["has_origins"], "false")
-        self.assertEqual(outputs["reconcile"], "false")
         self.assertEqual(json.loads(outputs["matrix"]), {"include": []})
 
-    def test_off_main_revision_fails_loudly(self):
+    def test_auxiliary_package_input_selects_its_origin(self):
         completed = self.run_plan(
-            revision=self.feature_commit,
-            base_revision=self.initial,
-        )
-
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertIn("not on main", completed.stderr)
-
-    def test_unrelated_or_reversed_revisions_fail_loudly(self):
-        completed = self.run_plan(
-            revision=self.alpha_commit,
-            base_revision=self.beta_commit,
-        )
-
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertIn("not an ancestor", completed.stderr)
-
-    def test_revision_selection_rejects_a_deleted_package_origin(self):
-        self.git(self.root, "rm", "-q", "-r", "packages/alpha")
-        self.git(self.root, "commit", "-q", "-m", "delete alpha")
-        deleted_commit = self.git(
-            self.root, "rev-parse", "HEAD"
-        ).stdout.strip()
-
-        completed = self.run_plan(revision=deleted_commit)
-
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertIn(
-            "selected package origin alpha has no APKBUILD", completed.stderr
-        )
-        self.assertFalse((self.root / "output").exists())
-
-    def test_range_selection_rejects_a_renamed_package_origin(self):
-        self.git(self.root, "mv", "packages/alpha", "packages/gamma")
-        self.write_apkbuild("gamma", "3.0.0")
-        self.git(self.root, "add", "packages/gamma/APKBUILD")
-        self.git(self.root, "commit", "-q", "-m", "rename alpha to gamma")
-        renamed_commit = self.git(
-            self.root, "rev-parse", "HEAD"
-        ).stdout.strip()
-
-        completed = self.run_plan(
-            revision=renamed_commit,
-            base_revision=self.rename_commit,
-        )
-
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertIn(
-            "selected package origin alpha has no APKBUILD", completed.stderr
-        )
-        self.assertFalse((self.root / "output").exists())
-
-    def test_manual_selection_rejects_a_nonexistent_package_origin(self):
-        completed = self.run_plan(
-            revision=self.rename_commit,
-            selected_origins="missing",
-        )
-
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertIn(
-            "selected package origin missing has no APKBUILD", completed.stderr
-        )
-        self.assertFalse((self.root / "output").exists())
-
-    def test_manual_selection_preserves_valid_package_origin_selection(self):
-        completed = self.run_plan(
-            revision=self.rename_commit,
-            selected_origins="alpha",
-        )
-
-        outputs = self.plan_outputs(completed)
-        matrix = json.loads(outputs["matrix"])
-        self.assertEqual(
-            {(item["origin"], item["arch"]) for item in matrix["include"]},
-            {("alpha", "x86_64"), ("alpha", "aarch64")},
-        )
-        self.assertEqual(outputs["reconcile"], "false")
-
-    def test_pull_request_diff_rejects_a_deleted_package_origin(self):
-        self.git(self.root, "rm", "-q", "-r", "packages/alpha")
-        self.git(self.root, "commit", "-q", "-m", "delete alpha")
-        deleted_commit = self.git(
-            self.root, "rev-parse", "HEAD"
-        ).stdout.strip()
-
-        completed = self.run_plan(
-            revision=deleted_commit,
             event="pull_request",
-            base=self.rename_commit,
+            revision=self.auxiliary_commit,
+            base=self.beta_commit,
+        )
+
+        entries = self.matrix_entries(completed)
+        self.assertEqual(
+            {item["origin"] for item in entries},
+            {"alpha"},
+        )
+
+    def test_moved_package_input_selects_both_origins(self):
+        completed = self.run_plan(
+            event="pull_request",
+            revision=self.move_commit,
+            base=self.auxiliary_commit,
+        )
+
+        entries = self.matrix_entries(completed)
+        self.assertEqual(
+            {item["origin"] for item in entries},
+            {"alpha", "beta"},
+        )
+
+    def test_removing_a_package_origin_fails_explicitly(self):
+        self.git("switch", "-q", "main")
+        parent = self.revision()
+        self.git("rm", "-q", "-r", "packages/alpha")
+        self.git("commit", "-q", "-m", "remove alpha")
+        removed = self.revision()
+
+        completed = self.run_plan(
+            event="push",
+            revision=removed,
+            before=parent,
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("removing package origin alpha is unsupported", completed.stderr)
+        self.assertFalse((self.root / "output").exists())
+
+    def test_narrowing_origin_architectures_fails_explicitly(self):
+        self.git("switch", "-q", "main")
+        parent = self.revision()
+        self.write_apkbuild("alpha", "3.0.0", "x86_64")
+        self.commit("drop alpha aarch64", "packages/alpha/APKBUILD")
+        narrowed = self.revision()
+
+        completed = self.run_plan(
+            event="push",
+            revision=narrowed,
+            before=parent,
         )
 
         self.assertNotEqual(completed.returncode, 0)
         self.assertIn(
-            "selected package origin alpha has no APKBUILD", completed.stderr
+            "removing architecture aarch64 from package origin alpha is unsupported",
+            completed.stderr,
         )
         self.assertFalse((self.root / "output").exists())
+
+    def test_planner_has_no_manual_reconciliation_mode(self):
+        completed = self.run_plan(
+            event="push",
+            revision=self.ci_fix_commit,
+            before=self.alpha_commit,
+        )
+
+        self.assertNotIn("reconcile", self.plan_outputs(completed))
 
 
 if __name__ == "__main__":

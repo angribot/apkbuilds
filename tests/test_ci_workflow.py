@@ -17,37 +17,24 @@ VERIFY_MODULE = (ROOT / "scripts" / "verify-repository.sh").read_text()
 
 
 class PackageOriginBuildTest(unittest.TestCase):
-    def test_all_pull_request_changes_trigger_the_required_gate(self):
+    def test_ci_has_only_pull_request_and_main_push_triggers(self):
         triggers = WORKFLOW[: WORKFLOW.index("permissions:")]
         self.assertNotIn("paths-ignore:", triggers)
         self.assertNotIn("paths:", triggers)
         self.assertIn("push:\n    branches: [main]", triggers)
         self.assertIn("pull_request:\n", triggers)
+        self.assertNotIn("workflow_dispatch:", triggers)
+        self.assertNotIn("schedule:", triggers)
+        self.assertFalse((ROOT / ".github/workflows/ci-recovery.yml").exists())
 
-    def test_manual_dispatch_plans_the_selected_revision(self):
-        self.assertIn("revision:", WORKFLOW)
-        self.assertIn("base_revision:", WORKFLOW)
-        self.assertIn("origins:", WORKFLOW)
-        self.assertEqual(WORKFLOW.count("ref: ${{ inputs.revision || github.sha }}"), 4)
+    def test_workflow_plans_the_checked_out_event_revision(self):
+        self.assertNotIn("${{ inputs.", WORKFLOW)
         check = WORKFLOW[WORKFLOW.index("  check:") : WORKFLOW.index("\n  build:")]
-        self.assertIn("REVISION: ${{ inputs.revision || github.sha }}", check)
-        self.assertIn("BASE_REVISION: ${{ inputs.base_revision }}", check)
-        self.assertIn("SELECTED_ORIGINS: ${{ inputs.origins }}", check)
-        self.assertIn(
-            "EXPLICIT_REVISION: ${{ inputs.revision != '' && 'true' || 'false' }}",
-            check,
-        )
-        self.assertIn(
-            "MAIN_REVISION: origin/${{ github.event.repository.default_branch }}",
-            check,
-        )
+        self.assertIn("REVISION: ${{ github.sha }}", check)
+        self.assertIn("BASE: ${{ github.event.pull_request.base.sha }}", check)
+        self.assertIn("BEFORE: ${{ github.event.before }}", check)
         self.assertIn("run: sh scripts/plan-origins.sh", check)
         self.assertNotIn("\n  plan:", WORKFLOW)
-
-    def test_full_dispatch_still_plans_all_origins(self):
-        check = WORKFLOW[WORKFLOW.index("  check:") : WORKFLOW.index("\n  build:")]
-        self.assertIn("FULL: ${{ inputs.full || 'false' }}", check)
-        self.assertIn("run: sh scripts/plan-origins.sh", check)
 
     def test_package_origin_inputs_require_declared_build_increase(self):
         guard_start = WORKFLOW.index("- name: Require a version increase")
@@ -74,31 +61,31 @@ class PackageOriginBuildTest(unittest.TestCase):
         self.assertIn("outputs:", check)
         self.assertIn("matrix: ${{ steps.set-matrix.outputs.matrix }}", check)
         self.assertIn("has_origins: ${{ steps.set-matrix.outputs.has_origins }}", check)
-        self.assertIn("reconcile: ${{ steps.set-matrix.outputs.reconcile }}", check)
+        self.assertNotIn("reconcile:", check)
         self.assertEqual(check.count("actions/checkout@"), 1)
         self.assertIn("needs: check", build)
         self.assertNotIn("needs: [check, plan]", build)
 
-    def test_reconciliation_verifies_an_unchanged_published_snapshot(self):
-        check_start = WORKFLOW.index("  check:")
+    def test_no_candidate_skips_signing_verification_and_publication(self):
         sign_start = WORKFLOW.index("\n  sign:")
-        check = WORKFLOW[check_start:sign_start]
-        sign = WORKFLOW[sign_start : WORKFLOW.index("\n  verify:", sign_start)]
+        verify_start = WORKFLOW.index("\n  verify:", sign_start)
+        publish_start = WORKFLOW.index("\n  publish:", verify_start)
+        sign = WORKFLOW[sign_start:verify_start]
+        verify = WORKFLOW[verify_start:publish_start]
+        publish = WORKFLOW[publish_start:]
         self.assertIn(
-            "reconcile: ${{ steps.set-matrix.outputs.reconcile }}", check
+            "snapshot_created: ${{ steps.merge.outputs.merged }}", sign
         )
-        self.assertIn("needs: [build, check]", sign)
-        self.assertIn(
-            "steps.merge.outputs.merged == 'true' ||\n          needs.check.outputs.reconcile == 'true'",
-            sign,
-        )
+        self.assertNotIn("reconcile", WORKFLOW)
+        self.assertNotIn("id: snapshot", sign)
+        self.assertEqual(sign.count("if: steps.merge.outputs.merged == 'true'"), 5)
+        self.assertIn("if: needs.sign.outputs.snapshot_created == 'true'", verify)
+        self.assertIn("needs.sign.outputs.snapshot_created == 'true'", publish)
         self.assertNotIn("contents: write", sign)
-        self.assertIn("id: snapshot", sign)
-        self.assertIn("if: steps.snapshot.outputs.created == 'true'", sign)
 
     def test_build_mismatch_logs_source_and_build_identities(self):
         self.assertIn(
-            '--source-revision "${{ inputs.revision || github.sha }}"', WORKFLOW
+            '--source-revision "${{ github.sha }}"', WORKFLOW
         )
         self.assertIn("source revision=", BUILD_MODULE)
         self.assertIn("declared build=", BUILD_MODULE)
@@ -114,11 +101,13 @@ class PackageOriginBuildTest(unittest.TestCase):
         self.assertNotIn("\n  gate:", WORKFLOW)
         self.assertIn("EVENT: ${{ github.event_name }}", ci)
         self.assertIn("HAS_ORIGINS: ${{ needs.check.outputs.has_origins }}", ci)
+        self.assertIn("SNAPSHOT_CREATED: ${{ needs.sign.outputs.snapshot_created }}", ci)
         self.assertIn("REF: ${{ github.ref_name }}", ci)
         self.assertIn('test "$CHECK" = success', ci)
         self.assertIn('if [ "$HAS_ORIGINS" = true ]; then', ci)
         self.assertIn('test "$BUILD" = success', ci)
         self.assertIn('test "$SIGN" = success', ci)
+        self.assertIn('if [ "$SNAPSHOT_CREATED" = true ]; then', ci)
         self.assertIn('test "$VERIFY" = success', ci)
         self.assertIn("publish:\n    needs: [ci, sign, verify]", WORKFLOW)
 
@@ -307,7 +296,7 @@ class PackageOriginReplacementTest(unittest.TestCase):
         self.assertIn("verify:\n    needs: sign", WORKFLOW)
         self.assertIn("ci:\n    if: always()", WORKFLOW)
         self.assertIn("publish:\n    needs: [ci, sign, verify]", WORKFLOW)
-        self.assertIn("snapshot_created: ${{ steps.snapshot.outputs.created }}", WORKFLOW)
+        self.assertIn("snapshot_created: ${{ steps.merge.outputs.merged }}", WORKFLOW)
         staged_verification = WORKFLOW[verify_job:publish_job]
         self.assertIn("if: needs.sign.outputs.snapshot_created == 'true'", staged_verification)
         self.assertNotIn("continue-on-error", staged_verification)

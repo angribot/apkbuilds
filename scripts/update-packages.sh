@@ -15,12 +15,8 @@ if [ ! -f "$updater_manifest" ]; then
 fi
 
 PUSH_ATTEMPTS=3
-DISPATCH_ATTEMPTS=3
 failures=0
 fatal_failure=0
-has_updates=0
-initial_commit=
-final_commit=
 
 validate_updater_manifest() {
   if ! awk -F '|' '
@@ -141,30 +137,6 @@ push_commit() {
   return 1
 }
 
-mark_publication_dispatch_failure() {
-  if [ -n "${GITHUB_OUTPUT:-}" ]; then
-    echo 'publication_dispatch_failed=true' >> "$GITHUB_OUTPUT"
-  fi
-}
-
-dispatch_publication() {
-  _dp_initial_commit="$1"
-  _dp_final_commit="$2"
-
-  _dp_attempt=1
-  while [ "$_dp_attempt" -le "$DISPATCH_ATTEMPTS" ]; do
-    if gh workflow run ci.yml --ref main \
-        -f base_revision="$_dp_initial_commit" \
-        -f revision="$_dp_final_commit" -f full=false; then
-      return 0
-    fi
-    echo "CI publication dispatch attempt $_dp_attempt failed" >&2
-    _dp_attempt=$((_dp_attempt + 1))
-  done
-
-  return 1
-}
-
 process_update() {
   _pu_package_origin="$1"
   _pu_updater="$2"
@@ -207,11 +179,6 @@ process_update() {
     fi
     return 1
   fi
-  has_updates=1
-  if ! final_commit=$(git rev-parse origin/main); then
-    echo "::error::could not determine $_pu_package_origin update commit" >&2
-    return 2
-  fi
   return 0
 }
 
@@ -219,10 +186,6 @@ validate_updater_manifest || exit 1
 
 git config user.name 'github-actions[bot]'
 git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-if ! initial_commit=$(git rev-parse HEAD); then
-  echo "::error::could not determine the starting main commit" >&2
-  exit 1
-fi
 
 # Preserve manifest order: the updater is a single writer, and each package
 # origin reaches main before the next updater changes the checkout.
@@ -248,20 +211,6 @@ while IFS='|' read -r _main_package_origin _main_updater _main_test; do
     fi
   fi
 done < "$updater_manifest"
-
-# A GITHUB_TOKEN push does not trigger another workflow. Dispatch one
-# publication run after every package origin has had its chance to update, and
-# pass the exact final revision while keeping main as the workflow ref.
-if [ "$has_updates" -eq 1 ]; then
-  if [ -z "$final_commit" ]; then
-    echo "::error::could not dispatch CI publication without a main commit" >&2
-    failures=1
-  elif ! dispatch_publication "$initial_commit" "$final_commit"; then
-    echo "::error::could not dispatch CI publication for $final_commit after $DISPATCH_ATTEMPTS attempts" >&2
-    mark_publication_dispatch_failure
-    failures=1
-  fi
-fi
 
 if [ "$fatal_failure" -eq 1 ]; then
   exit 1

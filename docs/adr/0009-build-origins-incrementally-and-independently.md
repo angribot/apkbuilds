@@ -1,5 +1,7 @@
 # Build package origins incrementally and independently
 
+_Status: superseded by ADR-0014_
+
 CI selects only package origins whose inputs changed since the last push to
 `main`, while full and scheduled runs reconcile all package origins; every
 input below a package origin must advance its declared build to preserve the immutability of

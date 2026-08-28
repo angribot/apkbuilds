@@ -96,25 +96,13 @@ if package_origin in updated:
         gh.write_text(
             """#!/bin/sh
 printf '%s\\n' "$*" >> "$GH_INVOCATIONS"
-count=0
-if [ -e "$GH_ATTEMPTS" ]; then
-    count=$(cat "$GH_ATTEMPTS")
-fi
-count=$((count + 1))
-printf '%s\\n' "$count" > "$GH_ATTEMPTS"
-if [ "$count" -le "${GH_FAIL_FIRST:-0}" ]; then
-    exit 1
-fi
-if [ "${GH_EXIT:-0}" -ne 0 ]; then
-    exit "$GH_EXIT"
-fi
+exit 1
 """
         )
         gh.chmod(gh.stat().st_mode | stat.S_IXUSR)
         return {
             "PATH": os.pathsep.join([str(fake_bin), os.environ["PATH"]]),
             "GH_INVOCATIONS": str(invocations),
-            "GH_ATTEMPTS": str(root / "gh-attempts"),
         }
 
     def run_updater(self, root, env=None):
@@ -186,7 +174,6 @@ fi
 
     def test_failed_package_origin_does_not_block_or_leak_into_later_origins(self):
         root, _ = self.create_checkout()
-        initial_commit = self.git(root, "rev-parse", "HEAD").stdout.strip()
         env = self.install_fake_gh(root)
         env.update({"UPDATED_ORIGINS": "zerostack,realm", "FAIL_UPDATERS": "gnupg"})
 
@@ -206,34 +193,19 @@ fi
             self.git(root, "status", "--short", "--untracked-files=no").stdout,
             "",
         )
-        final_commit = self.git(root, "rev-parse", "origin/main").stdout.strip()
-        self.assertEqual(
-            (root / "gh-invocations").read_text().splitlines(),
-            [
-                "workflow run ci.yml --ref main "
-                f"-f base_revision={initial_commit} "
-                f"-f revision={final_commit} -f full=false"
-            ],
-        )
+        self.assertFalse((root / "gh-invocations").exists())
 
-    def test_successful_updates_dispatch_once_for_final_revision(self):
+    def test_successful_updates_rely_on_their_main_pushes_for_publication(self):
         root, _ = self.create_checkout()
-        initial_commit = self.git(root, "rev-parse", "HEAD").stdout.strip()
         env = self.install_fake_gh(root)
         env["UPDATED_ORIGINS"] = "gnupg,realm"
 
         completed = self.run_updater(root, env)
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        invocations = (root / "gh-invocations").read_text().splitlines()
-        self.assertEqual(len(invocations), 1)
-        final_commit = self.git(root, "rev-parse", "origin/main").stdout.strip()
-        self.assertEqual(
-            invocations[0],
-            "workflow run ci.yml --ref main "
-            f"-f base_revision={initial_commit} "
-            f"-f revision={final_commit} -f full=false",
-        )
+        self.assertIn("pkgver=2.0.0", self.remote_file(root, "packages/gnupg/APKBUILD"))
+        self.assertIn("pkgver=2.0.0", self.remote_file(root, "packages/realm/APKBUILD"))
+        self.assertFalse((root / "gh-invocations").exists())
 
     def test_exhausted_push_retries_abandon_only_current_package_origin(self):
         root, _ = self.create_checkout()
@@ -282,37 +254,6 @@ exec "$REAL_GIT" "$@"
         )
         self.assertIn("pkgver=2.0.0", self.remote_file(root, "packages/realm/APKBUILD"))
         self.assertIn("gnupg push failed after 3 attempts", completed.stderr)
-
-    def test_dispatch_retries_after_a_transient_failure(self):
-        root, _ = self.create_checkout()
-        env = self.install_fake_gh(root)
-        env.update({"UPDATED_ORIGINS": "gnupg", "GH_FAIL_FIRST": "2"})
-
-        completed = self.run_updater(root, env)
-
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(len((root / "gh-invocations").read_text().splitlines()), 3)
-
-    def test_dispatch_failure_is_visible_after_a_successful_update(self):
-        root, _ = self.create_checkout()
-        env = self.install_fake_gh(root)
-        output = root / "github-output"
-        env.update(
-            {
-                "UPDATED_ORIGINS": "gnupg",
-                "GH_EXIT": "1",
-                "GITHUB_OUTPUT": str(output),
-            }
-        )
-
-        completed = self.run_updater(root, env)
-
-        self.assertEqual(completed.returncode, 1)
-        self.assertIn("could not dispatch CI publication", completed.stderr)
-        self.assertIn("3 attempts", completed.stderr)
-        self.assertEqual(len((root / "gh-invocations").read_text().splitlines()), 3)
-        self.assertEqual(output.read_text().strip(), "publication_dispatch_failed=true")
-        self.assertIn("pkgver=2.0.0", self.remote_file(root, "packages/gnupg/APKBUILD"))
 
     def test_stale_main_is_rebased_and_pushed_without_force(self):
         root, remote = self.create_checkout()
