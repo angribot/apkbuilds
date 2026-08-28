@@ -147,8 +147,14 @@ class CiModuleTest(unittest.TestCase):
             fake_su.write_text(
                 "#!/bin/sh\n"
                 "printf '%s\\n' \"$*\" >> \"$FAKE_SU_LOG\"\n"
-                "case \"$*\" in\n"                "*abuild\\ listpkg*) printf '%s\\n' alpha-1-r0.apk ;;\n"
-                "*abuild\\ -r*) mkdir -p \"$FAKE_BUILT\"; : > \"$FAKE_BUILT/alpha-1-r0.apk\" ;;\n"
+                "case \"$*\" in\n"
+                "*abuild\\ listpkg*) printf '%s\\n' alpha-1-r0.apk ;;\n"
+                "*abuild\\ -r*)\n"
+                "  repo=source\n"
+                "  printf '%s\\n' \"$*\" | grep -q '/packages/' && repo=packages\n"
+                "  built=\"$FAKE_OUTPUT/alpha/$repo/x86_64\"\n"
+                "  mkdir -p \"$built\"; : > \"$built/alpha-1-r0.apk\"\n"
+                "  ;;\n"
                 "esac\n"
                 "exit 0\n"
             )
@@ -181,7 +187,7 @@ class CiModuleTest(unittest.TestCase):
                 {
                     "PATH": os.pathsep.join([str(fake_bin), env["PATH"]]),
                     "FAKE_INDEX": str(index_dir),
-                    "FAKE_BUILT": str(output / "alpha" / "packages" / "x86_64"),
+                    "FAKE_OUTPUT": str(output),
                     "FAKE_SU_LOG": str(root / "su-log"),
                 }
             )

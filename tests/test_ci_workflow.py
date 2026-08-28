@@ -143,13 +143,13 @@ class PackageOriginBuildTest(unittest.TestCase):
         build = WORKFLOW[build_start:sign_start]
         self.assertIn('-v "$GITHUB_WORKSPACE:/workspace:ro"', build)
         self.assertIn('build-package-family.sh', build)
-        self.assertIn('cp -R "$workspace/packages/$origin" "$output/source/"', BUILD_MODULE)
+        self.assertIn('cp -R "$workspace/packages/$origin" "$output/packages/"', BUILD_MODULE)
         self.assertIn(
             'sh "$workspace/scripts/prepare-builder.sh" \\\n  "$output" "$distfiles" "$cargo_home" "$ccache_dir" "$sccache_dir"',
             BUILD_MODULE,
         )
         self.assertIn(
-            'cd \\\"$output/source/$origin\\\" && CARGO_HOME=', BUILD_MODULE
+            'cd \\\"$output/packages/$origin\\\" && CARGO_HOME=', BUILD_MODULE
         )
         self.assertIn('REPODEST=', BUILD_MODULE)
         self.assertNotIn("prepare-builder.sh /new /workspace", build)
