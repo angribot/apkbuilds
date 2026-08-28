@@ -84,13 +84,16 @@ failure() {
 trap failure EXIT
 
 stage=source-copy
-mkdir -p "$output/source"
-cp -R "$workspace/packages/$origin" "$output/source/"
+# Keep the staged checkout's repository directory named `packages`. abuild
+# places packages under REPODEST/<repository>/<arch>, where <repository> is
+# derived from the APKBUILD's parent directory.
+mkdir -p "$output/packages"
+cp -R "$workspace/packages/$origin" "$output/packages/"
 
 stage=toolchain
 sh "$workspace/scripts/prepare-builder.sh" \
   "$output" "$distfiles" "$cargo_home" "$ccache_dir" "$sccache_dir" \
-  "$output/source/$origin"
+  "$output/packages/$origin"
 . "$workspace/scripts/lib.sh"
 
 stage='published-index'
@@ -111,7 +114,7 @@ assert_origin_directory "$workspace/packages/$origin"
 expected="/tmp/expected-$origin"
 published_packages="/tmp/published-$origin"
 su builder -c \
-  "cd \"$output/source/$origin\" && abuild listpkg" \
+  "cd \"$output/packages/$origin\" && abuild listpkg" \
   > "$expected"
 apkindex_origin_apks \
   /tmp/published/APKINDEX "$origin" > "$published_packages"
@@ -151,7 +154,7 @@ fi
 stage=compile
 build_started=$(date +%s)
 if ! su builder -c \
-  "cd \"$output/source/$origin\" && CARGO_HOME=\"$cargo_home\" SCCACHE_DIR=\"$sccache_dir\" RUSTC_WRAPPER=sccache REPODEST=\"$output/$origin\" abuild -r"; then
+  "cd \"$output/packages/$origin\" && CARGO_HOME=\"$cargo_home\" SCCACHE_DIR=\"$sccache_dir\" RUSTC_WRAPPER=sccache REPODEST=\"$output/$origin\" abuild -r"; then
   printf '::error::build stage=compile arch=%s package-origin=%s declared-build=%s published-build(s)=%s\n' \
     "$arch" "$origin" "$declared" "$published_builds" >&2
   exit 1
