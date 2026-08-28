@@ -1,5 +1,7 @@
 # Serialize package origin updates through one writer
 
+_Status: superseded by ADR-0016_
+
 The scheduled updater previously used a sequential matrix whose jobs checked
 out the same commit, so an earlier push could make a later package origin
 update fail; one writer now runs updaters in a fixed order and commits and

@@ -50,44 +50,18 @@ class UpdateLibTest(unittest.TestCase):
         self.assertIsNone(urlopen.call_args.args[0].get_header("Authorization"))
 
     @mock.patch.object(update.urllib.request, "urlopen")
-    @mock.patch.object(update.time, "sleep")
-    def test_download_retries_on_retryable_errors_then_raises(self, sleep, urlopen):
+    def test_download_exposes_the_first_acquisition_failure(self, urlopen):
         from urllib.error import HTTPError
 
-        error_429 = HTTPError("https://example.com", 429, "Too Many Requests", {}, None)
-        urlopen.side_effect = [error_429, error_429, error_429]
+        error = HTTPError("https://example.com", 503, "Service Unavailable", {}, None)
+        recovery = mock.MagicMock()
+        recovery.__enter__.return_value.read.return_value = b"unexpected retry"
+        urlopen.side_effect = [error, recovery]
+
         with self.assertRaises(HTTPError):
             update.download("https://example.com/release")
-        self.assertEqual(urlopen.call_count, 3)
-        self.assertEqual(sleep.call_count, 2)
-        sleep.assert_any_call(1)
-        sleep.assert_any_call(2)
 
-    @mock.patch.object(update.urllib.request, "urlopen")
-    @mock.patch.object(update.time, "sleep")
-    def test_download_succeeds_after_retryable_error(self, sleep, urlopen):
-        from urllib.error import HTTPError
-
-        error_503 = HTTPError("https://example.com", 503, "Service Unavailable", {}, None)
-        success = mock.MagicMock()
-        success.__enter__.return_value.read.return_value = b"ok"
-        urlopen.side_effect = [error_503, success]
-        result = update.download("https://example.com/release")
-        self.assertEqual(result, b"ok")
-        self.assertEqual(urlopen.call_count, 2)
-        sleep.assert_called_once_with(1)
-
-    @mock.patch.object(update.urllib.request, "urlopen")
-    @mock.patch.object(update.time, "sleep")
-    def test_download_does_not_retry_on_non_retryable_error(self, sleep, urlopen):
-        from urllib.error import HTTPError
-
-        error_404 = HTTPError("https://example.com", 404, "Not Found", {}, None)
-        urlopen.side_effect = error_404
-        with self.assertRaises(HTTPError):
-            update.download("https://example.com/release")
         self.assertEqual(urlopen.call_count, 1)
-        sleep.assert_not_called()
 
     def test_bump_apkbuild_version_updates_pkgver_and_resets_pkgrel(self):
         text = "pkgver=1.2.3\npkgrel=5\n"

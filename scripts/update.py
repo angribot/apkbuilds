@@ -3,10 +3,8 @@
 import hashlib
 import os
 import re
-import time
 import urllib.request
 from typing import NamedTuple
-from urllib.error import HTTPError, URLError
 
 
 class ArchAsset(NamedTuple):
@@ -25,25 +23,13 @@ class CandidateRelease(NamedTuple):
 
 
 def download(url):
-    """Download *url* with retry and backoff, returning the response body."""
+    """Download *url* once, returning the response body."""
     headers = {"User-Agent": "apkbuilds-updater"}
     if url.startswith("https://api.github.com/") and os.environ.get("GITHUB_TOKEN"):
         headers["Authorization"] = f"Bearer {os.environ['GITHUB_TOKEN']}"
     request = urllib.request.Request(url, headers=headers)
-    last_error = None
-    for attempt in range(3):
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return response.read()
-        except HTTPError as error:
-            if error.code not in (408, 429) and not 500 <= error.code < 600:
-                raise
-            last_error = error
-        except (TimeoutError, URLError) as error:
-            last_error = error
-        if attempt < 2:
-            time.sleep(2**attempt)
-    raise last_error
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return response.read()
 
 
 def bump_apkbuild_version(text, version):

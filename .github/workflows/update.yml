@@ -3,12 +3,11 @@ name: Update packages
 on:
   schedule:
     - cron: '0 0 * * *'
-  workflow_dispatch:
 
 permissions:
   contents: write
 
-# Keep scheduled and manually dispatched writers from pushing to main together.
+# Keep scheduled writers from pushing to main together.
 concurrency:
   group: update
 

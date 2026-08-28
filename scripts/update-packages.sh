@@ -1,6 +1,6 @@
 #!/bin/sh
-# Update package origins one at a time so every successful commit reaches main
-# before the next updater changes the checkout.
+# Update package origins one at a time, then publish their successful commits
+# as one batch after every updater has had a chance to run.
 
 set -u
 
@@ -14,9 +14,8 @@ if [ ! -f "$updater_manifest" ]; then
   exit 1
 fi
 
-PUSH_ATTEMPTS=3
 failures=0
-fatal_failure=0
+has_updates=0
 
 validate_updater_manifest() {
   if ! awk -F '|' '
@@ -86,54 +85,16 @@ validate_updater_manifest() {
   done < "$updater_manifest"
 }
 
-# Drop the current package origin commit after a failed push. Successful
-# earlier package origins are already on origin/main, while the current one must
-# not be carried into the next package origin's commit.
-abandon_current_commit() {
-  git rebase --abort >/dev/null 2>&1 || true
-  git switch --detach --quiet origin/main
-}
-
 # A failed updater or commit must leave its APKBUILD at the current commit.
 discard_uncommitted_update() {
   git restore --staged --worktree -- "$1"
 }
 
-push_commit() {
-  _pc_package_origin="$1"
-
-  _pc_attempt=1
-  while [ "$_pc_attempt" -le "$PUSH_ATTEMPTS" ]; do
-    if git push origin HEAD:main; then
-      return 0
-    fi
-
-    echo "$_pc_package_origin push attempt $_pc_attempt did not reach main; fetching origin/main"
-    if ! git fetch origin main; then
-      echo "$_pc_package_origin could not fetch origin/main after push failure" >&2
-      _pc_attempt=$((_pc_attempt + 1))
-      continue
-    fi
-
-    # A network error can make a successful push look unsuccessful. Do not
-    # rebase or retry a commit that is already present on the remote.
-    if git merge-base --is-ancestor HEAD origin/main; then
-      echo "$_pc_package_origin commit is already on origin/main"
-      return 0
-    fi
-
-    if [ "$_pc_attempt" -lt "$PUSH_ATTEMPTS" ]; then
-      echo "$_pc_package_origin rebasing onto origin/main"
-      if ! git rebase origin/main; then
-        echo "$_pc_package_origin could not rebase onto origin/main" >&2
-        git rebase --abort >/dev/null 2>&1 || true
-        return 1
-      fi
-    fi
-    _pc_attempt=$((_pc_attempt + 1))
-  done
-
-  echo "$_pc_package_origin push failed after $PUSH_ATTEMPTS attempts" >&2
+push_batch() {
+  if git push origin HEAD:main; then
+    return 0
+  fi
+  echo "::error::could not push updater batch to main" >&2
   return 1
 }
 
@@ -169,16 +130,7 @@ process_update() {
     return 2
   fi
 
-  # Push each origin immediately. The next origin is not allowed to run with
-  # an unpublished commit in the checkout.
-  if ! push_commit "$_pu_package_origin"; then
-    echo "::error::abandoning unpublished $_pu_package_origin update" >&2
-    if ! abandon_current_commit; then
-      echo "::error::could not restore checkout after $_pu_package_origin failure" >&2
-      return 2
-    fi
-    return 1
-  fi
+  has_updates=1
   return 0
 }
 
@@ -187,8 +139,8 @@ validate_updater_manifest || exit 1
 git config user.name 'github-actions[bot]'
 git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
-# Preserve manifest order: the updater is a single writer, and each package
-# origin reaches main before the next updater changes the checkout.
+# Preserve manifest order: the updater is a single writer, so each origin's
+# local commit is isolated before the next updater changes the checkout.
 while IFS='|' read -r _main_package_origin _main_updater _main_test; do
   case "$_main_package_origin" in
     ''|'#'*) continue ;;
@@ -206,13 +158,14 @@ while IFS='|' read -r _main_package_origin _main_updater _main_test; do
     _main_status=$?
     failures=1
     if [ "$_main_status" -eq 2 ]; then
-      fatal_failure=1
       break
     fi
   fi
 done < "$updater_manifest"
 
-if [ "$fatal_failure" -eq 1 ]; then
-  exit 1
+if [ "$has_updates" -eq 1 ]; then
+  if ! push_batch; then
+    failures=1
+  fi
 fi
 exit "$failures"
