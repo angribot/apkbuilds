@@ -1,97 +1,96 @@
 #!/bin/sh
-# Sign a merged APK repository inside the network-isolated signer.
-# ABUILD_PRIVATE_KEY is deliberately not accepted here; the caller passes a
-# read-only private-key file that is mounted only into this container.
+# Merge complete candidate families and sign one staged repository snapshot.
 set -eu
 
 usage() {
-  cat >&2 <<'USAGE'
-usage: sign-repository.sh --pages DIR --repository-key FILE \
-  --private-key-file FILE
-USAGE
+  printf '%s\n' 'usage: sign-repository.sh'
 }
 
-pages=
-repository_key=
-private_key_file=
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --pages|--repository-key|--private-key-file)
-      [ "$#" -ge 2 ] || { usage; exit 2; }
-      case "$1" in
-        --pages) pages=$2 ;;
-        --repository-key) repository_key=$2 ;;
-        --private-key-file) private_key_file=$2 ;;
-      esac
-      shift 2
-      ;;
-    --help)
-      usage >&1
-      exit 0
-      ;;
-    *)
-      usage
-      exit 2
-      ;;
-  esac
-done
+case "${1:-}" in
+  --help)
+    usage
+    exit 0
+    ;;
+  '') ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
 
-[ -n "$pages" ] && [ -n "$repository_key" ] && \
-  [ -n "$private_key_file" ] || {
-  usage
+workspace=${GITHUB_WORKSPACE:-$(CDPATH='' cd "$(dirname "$0")/.." && pwd)}
+runner_temp=${RUNNER_TEMP:-}
+[ -n "$runner_temp" ] || {
+  printf '%s\n' 'RUNNER_TEMP is required' >&2
   exit 2
 }
-
+pages=$runner_temp/pages
+built=$runner_temp/built
+repository_key=$workspace/keys/apkbuilds.rsa.pub
+private_key=
 arch=all
 origin=all
-stage=arguments
+stage=candidates
+
 failure() {
   status=$?
+  [ -z "$private_key" ] || rm -f "$private_key"
   if [ "$status" -ne 0 ]; then
     printf '::error::sign stage=%s arch=%s package-origin=%s exit=%s\n' \
       "$stage" "$arch" "$origin" "$status" >&2
   fi
-  rm -f /tmp/apkbuilds.rsa
   exit "$status"
 }
 trap failure EXIT
 
-stage=key-setup
-umask 077
-private_key=/tmp/apkbuilds.rsa
-cp "$private_key_file" "$private_key"
-cp "$repository_key" /etc/apk/keys/
+mkdir -p "$built"
+if [ -z "$(find "$built" -type f -name '*.apk' -print -quit 2>/dev/null)" ]; then
+  printf '%s\n' 'no candidate package families'
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    printf '%s\n' 'snapshot_created=false' >> "$GITHUB_OUTPUT"
+  fi
+  exit 0
+fi
+[ -n "${ABUILD_PRIVATE_KEY:-}" ] || {
+  printf '%s\n' 'ABUILD_PRIVATE_KEY is required' >&2
+  exit 2
+}
+private_key_contents=$ABUILD_PRIVATE_KEY
+unset ABUILD_PRIVATE_KEY
 
-stage='package-signing'
-for sign_arch in x86_64 aarch64; do
-  arch=$sign_arch
-  stage='package-signing'
-  apk_repository="$pages/edge/$arch"
-  test -d "$apk_repository" || continue
-  for package in "$apk_repository"/*.apk; do
-    # Already-published packages carry a valid signature.
-    apk verify "$package" && continue
-    work=$(mktemp -d)
-    (
-      cd "$work"
-      abuild-gzsplit < "$package"
-      abuild-sign -q -t RSA256 \
-        -k "$private_key" \
-        -p "$repository_key" \
-        control.tar.gz
-      cat control.tar.gz data.tar.gz > "$package"
-    )
-    rm -rf "$work"
-  done
-  stage='index-signing'
-  cd "$apk_repository"
-  rm -f APKINDEX.tar.gz Packages.adb
-  apk index --no-warnings --quiet \
-    --output APKINDEX.tar.gz \
-    --rewrite-arch "$arch" \
-    ./*.apk
-  abuild-sign -q -t RSA256 \
-    -k "$private_key" \
-    -p "$repository_key" \
-    APKINDEX.tar.gz
-done
+stage=signer-image
+docker build --tag apkbuilds-signer - <<'EOF'
+FROM alpine:edge
+RUN apk add --no-cache abuild
+EOF
+
+stage=family-merge
+docker run --rm --network none \
+  -v "$pages:/pages" \
+  -v "$built:/built:ro" \
+  -v "$workspace:/workspace:ro" \
+  -v "$repository_key:/keys/apkbuilds.rsa.pub:ro" \
+  apkbuilds-signer \
+    /workspace/scripts/operations/merge-package-families.sh
+
+stage=repository-signing
+private_key=$runner_temp/repository-signing-key
+umask 077
+printf '%s\n' "$private_key_contents" > "$private_key"
+unset private_key_contents
+docker run --rm --network none \
+  -v "$pages:/pages" \
+  -v "$private_key:/private-key:ro" \
+  -v "$repository_key:/keys/apkbuilds.rsa.pub:ro" \
+  -v "$workspace/scripts/operations/sign-repository.sh:/sign-repository.sh:ro" \
+  apkbuilds-signer \
+    /sign-repository.sh
+rm -f "$private_key"
+private_key=
+
+stage=signature-verification
+sh "$workspace/scripts/verify-repository.sh" --arch all
+
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+  printf '%s\n' 'snapshot_created=true' >> "$GITHUB_OUTPUT"
+fi

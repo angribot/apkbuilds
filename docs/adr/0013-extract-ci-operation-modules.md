@@ -1,5 +1,7 @@
 # Extract CI operations behind shell-module seams
 
+_Status: superseded by ADR-0015_
+
 Workflow YAML remains responsible for job orchestration, mounts, and explicit
 parameters, while `scripts/build-package-family.sh`,
 `scripts/sign-repository.sh`, and `scripts/verify-repository.sh` provide

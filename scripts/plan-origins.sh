@@ -1,64 +1,65 @@
 #!/bin/sh
-# Select package origins for a CI run and write its build matrix.
+# Select package origins for pull-request validation or main reconciliation.
 # shellcheck disable=SC1091
 
 set -eu
 . scripts/lib.sh
 
 changed="$RUNNER_TEMP/changed-files"
-selected_origins=${SELECTED_ORIGINS:-}
-reconcile=false
-if [ "$EVENT" = "workflow_dispatch" ]; then
-  if ! target_commit=$(git rev-parse "$REVISION^{commit}"); then
-    printf '::error::invalid selected revision %s\n' "$REVISION" >&2
+removed="$RUNNER_TEMP/removed-apkbuilds"
+case "$EVENT" in
+  pull_request)
+    range_base=$BASE
+    ;;
+  push)
+    range_base=$BEFORE
+    ;;
+  *)
+    printf '::error::unsupported CI event %s\n' "$EVENT" >&2
     exit 1
-  fi
-  if ! main_commit=$(git rev-parse "$MAIN_REVISION^{commit}"); then
-    printf '::error::invalid main revision %s\n' "$MAIN_REVISION" >&2
-    exit 1
-  fi
-  if ! git merge-base --is-ancestor "$target_commit" "$main_commit"; then
-    printf '::error::selected revision %s is not on main\n' "$target_commit" >&2
-    exit 1
-  fi
-fi
+    ;;
+esac
 
-if [ "$EVENT" = "schedule" ] || [ "$FULL" = "true" ] || {
-  [ "$EVENT" = "workflow_dispatch" ] &&
-  [ "$EXPLICIT_REVISION" = "false" ] &&
-  [ -z "$BASE_REVISION" ] &&
-  [ -z "$selected_origins" ]
-}; then
-  # A manual run without a selected range is a reconciliation run. The
-  # published snapshot may lag behind more than the current parent commit.
-  reconcile=true
+git diff --no-renames --name-only "$range_base" "$REVISION" -- packages/ \
+  > "$changed"
+git diff --no-renames --diff-filter=D --name-only \
+  "$range_base" "$REVISION" -- packages/ > "$removed"
+
+status=0
+while IFS= read -r path; do
+  case "$path" in
+    packages/*/APKBUILD)
+      origin=${path#packages/}
+      origin=${origin%%/*}
+      printf '::error::removing package origin %s is unsupported\n' \
+        "$origin" >&2
+      status=1
+      ;;
+  esac
+done < "$removed"
+[ "$status" -eq 0 ] || exit "$status"
+
+for origin in $(changed_origins "$changed"); do
+  apkbuild="packages/$origin/APKBUILD"
+  [ -f "$apkbuild" ] || continue
+  previous="$RUNNER_TEMP/previous-$origin-APKBUILD"
+  if ! git show "$range_base:$apkbuild" > "$previous" 2>/dev/null; then
+    continue
+  fi
+  for arch in x86_64 aarch64; do
+    if supports_arch "$arch" "$previous" && \
+       ! supports_arch "$arch" "$apkbuild"; then
+      printf '::error::removing architecture %s from package origin %s is unsupported\n' \
+        "$arch" "$origin" >&2
+      status=1
+    fi
+  done
+done
+[ "$status" -eq 0 ] || exit "$status"
+
+if [ "$EVENT" = push ]; then
   origins=$(all_origins)
-elif [ "$EVENT" = "pull_request" ]; then
-  git diff --no-renames --name-only "$BASE" -- packages/ > "$changed"
-  origins=$(changed_origins "$changed")
-elif [ "$EVENT" = "workflow_dispatch" ] && [ -n "$selected_origins" ]; then
-  origins=$selected_origins
-elif [ "$EVENT" = "workflow_dispatch" ]; then
-  if [ -n "$BASE_REVISION" ]; then
-    if ! base_commit=$(git rev-parse "$BASE_REVISION^{commit}"); then
-      printf '::error::invalid base revision %s\n' "$BASE_REVISION" >&2
-      exit 1
-    fi
-  else
-    if ! base_commit=$(git rev-parse "$REVISION^"); then
-      printf '::error::selected revision %s has no valid parent\n' "$REVISION" >&2
-      exit 1
-    fi
-  fi
-  if ! git merge-base --is-ancestor "$base_commit" "$target_commit"; then
-    printf '::error::base revision %s is not an ancestor of %s\n' \
-      "$base_commit" "$target_commit" >&2
-    exit 1
-  fi
-  git diff --no-renames --name-only "$base_commit" "$target_commit" -- packages/ > "$changed"
-  origins=$(changed_origins "$changed")
 else
-  git diff --no-renames --name-only "$BEFORE" "$REVISION" -- packages/ > "$changed"
   origins=$(changed_origins "$changed")
 fi
 
@@ -74,23 +75,29 @@ for origin in $origins; do
   fi
 done
 
-items=
+selected_origins=
+for origin in $origins; do
+  [ -n "$selected_origins" ] && selected_origins="$selected_origins "
+  selected_origins="$selected_origins$origin"
+done
+printf 'origins=%s\n' "$selected_origins" >> "$GITHUB_OUTPUT"
+
+matrix_items=
 for origin in $origins; do
   for arch in x86_64 aarch64; do
     runner=ubuntu-24.04
     [ "$arch" = aarch64 ] && runner=ubuntu-24.04-arm
     if supports_arch "$arch" "packages/$origin/APKBUILD"; then
-      [ -n "$items" ] && items="$items,"
-      items="$items{\"arch\":\"$arch\",\"origin\":\"$origin\",\"runner\":\"$runner\"}"
+      [ -n "$matrix_items" ] && matrix_items="$matrix_items,"
+      matrix_items="$matrix_items{\"arch\":\"$arch\",\"origin\":\"$origin\",\"runner\":\"$runner\"}"
     fi
   done
 done
 
-echo "reconcile=$reconcile" >> "$GITHUB_OUTPUT"
-if [ -z "$items" ]; then
+if [ -z "$matrix_items" ]; then
   echo "has_origins=false" >> "$GITHUB_OUTPUT"
   echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
 else
   echo "has_origins=true" >> "$GITHUB_OUTPUT"
-  echo "matrix={\"include\":[$items]}" >> "$GITHUB_OUTPUT"
+  echo "matrix={\"include\":[$matrix_items]}" >> "$GITHUB_OUTPUT"
 fi

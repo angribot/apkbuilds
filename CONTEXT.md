@@ -86,6 +86,11 @@ _Avoid_: Repository, repo
 **Repository snapshot**:
 The signed indexes and exact physical APK set published together.
 
+**Repository reconciliation**:
+A comparison of each declared build for every origin-supported architecture
+with the published builds in an APK repository snapshot.
+_Avoid_: Full rebuild, recovery
+
 **Updater**:
 Automation that selects and verifies an eligible upstream release, then updates
 its package origin.

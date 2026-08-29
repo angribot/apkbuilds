@@ -1,6 +1,7 @@
-"""Package-update contract tests for .github/workflows/update.yml."""
+"""Contract tests for the scheduled package-update workflow."""
 
 import pathlib
+import re
 import shutil
 import subprocess
 import unittest
@@ -8,25 +9,36 @@ import unittest
 from tests.update_manifest import read_manifest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-WORKFLOW = (ROOT / ".github" / "workflows" / "update.yml").read_text()
+WORKFLOW_PATH = ROOT / ".github" / "workflows" / "update.yml"
+WORKFLOW = WORKFLOW_PATH.read_text()
+CI_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "ci.yml"
+CI_WORKFLOW = CI_WORKFLOW_PATH.read_text()
 UPDATER_PATH = ROOT / "scripts" / "update-packages.sh"
-UPDATER = UPDATER_PATH.read_text()
+
+
+def child_keys(document, parent):
+    """Read the immediate mapping keys under a simple workflow section."""
+    lines = document.splitlines()
+    parent_line = next(
+        index for index, line in enumerate(lines) if line == f"{parent}:"
+    )
+    keys = []
+    for line in lines[parent_line + 1 :]:
+        if line and not line.startswith(" "):
+            break
+        match = re.fullmatch(r"  ([A-Za-z0-9_-]+):(?: .*)?", line)
+        if match:
+            keys.append(match.group(1))
+    return keys
 
 
 class PackageUpdateTest(unittest.TestCase):
-    def test_workflow_uses_one_fixed_order_writer(self):
-        self.assertIn("sh scripts/update-packages.sh", WORKFLOW)
-        self.assertIn("fetch-depth: 0", WORKFLOW)
-        self.assertIn("ref: ${{ github.event.repository.default_branch }}", WORKFLOW)
-        self.assertIn("ssh-key: ${{ secrets.UPDATE_DEPLOY_KEY }}", WORKFLOW)
-        self.assertNotIn("strategy:", WORKFLOW)
-        self.assertNotIn("matrix:", WORKFLOW)
+    def test_workflow_triggers_and_permissions_are_narrow(self):
+        self.assertEqual(child_keys(WORKFLOW, "on"), ["schedule"])
+        self.assertEqual(child_keys(WORKFLOW, "permissions"), ["contents"])
+        self.assertEqual(child_keys(CI_WORKFLOW, "on"), ["push", "pull_request"])
 
-        self.assertIn(
-            "sh scripts/update-packages.sh packages/updaters", WORKFLOW
-        )
-        self.assertNotIn("scripts/update-gnupg.py", UPDATER)
-
+    def test_manifest_order_is_the_single_writer_order(self):
         entries = read_manifest()
         self.assertEqual(
             [origin for origin, _, _ in entries],
@@ -50,49 +62,6 @@ class PackageUpdateTest(unittest.TestCase):
                     self.assertNotEqual(test, "-")
                     self.assertTrue((ROOT / test).is_file(), test)
 
-    def test_workflow_dispatches_one_publication_for_successful_updates(self):
-        self.assertIn("GH_TOKEN: ${{ github.token }}", WORKFLOW)
-        self.assertIn("GITHUB_TOKEN: ${{ github.token }}", WORKFLOW)
-        self.assertIn("contents: write", WORKFLOW)
-        self.assertIn("actions: write", WORKFLOW)
-        self.assertIn("has_updates=1", UPDATER)
-        self.assertIn("final_commit=$(git rev-parse origin/main)", UPDATER)
-        self.assertIn("gh workflow run ci.yml --ref main", UPDATER)
-        self.assertIn(
-            'dispatch_publication "$initial_commit" "$final_commit"', UPDATER
-        )
-        self.assertIn(
-            '-f base_revision="$_dp_initial_commit"', UPDATER
-        )
-        self.assertIn("DISPATCH_ATTEMPTS=3", UPDATER)
-        self.assertIn('while [ "$_dp_attempt" -le "$DISPATCH_ATTEMPTS" ]', UPDATER)
-        self.assertIn("could not dispatch CI publication", UPDATER)
-        self.assertIn("publication_dispatch_failed=true", UPDATER)
-        self.assertIn("id: update", WORKFLOW)
-        self.assertIn(
-            "if: failure() && steps.update.outputs.publication_dispatch_failed == 'true'",
-            WORKFLOW,
-        )
-        self.assertIn("for attempt in 1 2 3", WORKFLOW)
-        self.assertIn("gh workflow run ci.yml --ref main -f full=false", WORKFLOW)
-        self.assertIn("reconciliation dispatch attempt", WORKFLOW)
-
-    def test_workflow_stages_each_apkbuild_and_never_force_pushes(self):
-        self.assertIn('git diff --quiet -- "$_pu_apkbuild"', UPDATER)
-        self.assertIn('git add -- "$_pu_apkbuild"', UPDATER)
-        self.assertNotIn("git add .", UPDATER)
-        self.assertNotIn("git add -A", UPDATER)
-        self.assertNotIn("--force", UPDATER)
-
-    def test_workflow_retries_stale_pushes_with_a_bound(self):
-        self.assertIn("PUSH_ATTEMPTS=3", UPDATER)
-        self.assertIn(
-            'while [ "$_pc_attempt" -le "$PUSH_ATTEMPTS" ]', UPDATER
-        )
-        self.assertIn("git fetch origin main", UPDATER)
-        self.assertIn("git rebase origin/main", UPDATER)
-        self.assertIn("git push origin HEAD:main", UPDATER)
-
     def test_updater_is_posix_sh_clean(self):
         completed = subprocess.run(
             ["sh", "-n", str(UPDATER_PATH)], capture_output=True, text=True
@@ -103,6 +72,15 @@ class PackageUpdateTest(unittest.TestCase):
     def test_updater_passes_posix_shellcheck(self):
         completed = subprocess.run(
             ["shellcheck", "--shell=sh", str(UPDATER_PATH)],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout)
+
+    @unittest.skipUnless(shutil.which("actionlint"), "actionlint not installed")
+    def test_workflows_pass_actionlint(self):
+        completed = subprocess.run(
+            ["actionlint", *map(str, sorted((ROOT / ".github" / "workflows").glob("*.yml")))],
             capture_output=True,
             text=True,
         )

@@ -18,10 +18,10 @@ failure() {
 }
 trap failure EXIT
 
-pages=$1
-built=$2
-workspace=$3
-repository_key=$4
+pages=${APKBUILDS_PAGES:-/pages}
+built=${APKBUILDS_BUILT:-/built}
+workspace=${APKBUILDS_WORKSPACE:-/workspace}
+repository_key=${APKBUILDS_REPOSITORY_KEY:-/keys/apkbuilds.rsa.pub}
 
 # lib.sh is checked independently; its runtime path comes from the container mount.
 # shellcheck source=/dev/null
