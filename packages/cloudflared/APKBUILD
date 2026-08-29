@@ -40,6 +40,7 @@ package() {
 
 	install -D -m755 "$srcdir"/$pkgname.initd "$pkgdir"/etc/init.d/$pkgname
 	install -D -m644 "$srcdir"/config.yml "$pkgdir"/etc/$pkgname/config.yml
+	install -d "$pkgdir"/var/lib/cloudflared
 }
 
 sha512sums="

@@ -47,6 +47,7 @@ class CloudflaredPackageTest(unittest.TestCase):
             'install -D -m644 "$srcdir"/config.yml "$pkgdir"/etc/$pkgname/config.yml',
             APKBUILD,
         )
+        self.assertIn('install -d "$pkgdir"/var/lib/cloudflared', APKBUILD)
 
     def test_openrc_service_uses_fixed_config_and_unprivileged_account(self):
         self.assertIn("command=/usr/bin/cloudflared", INITD)
@@ -88,6 +89,7 @@ class CloudflaredPackageTest(unittest.TestCase):
         self.assertIn('cloudflared --version | grep -F "$version"', SMOKE)
         self.assertIn("/usr/share/man/man1/cloudflared.1", SMOKE)
         self.assertIn("/etc/cloudflared/config.yml", SMOKE)
+        self.assertIn("test -d /var/lib/cloudflared", SMOKE)
         self.assertIn("service=/etc/init.d/cloudflared", SMOKE)
         self.assertIn('"$service" --nodeps start', SMOKE)
         self.assertIn("command_user=cloudflared:cloudflared", SMOKE)

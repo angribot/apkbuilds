@@ -17,6 +17,7 @@ cloudflared tunnel --help | grep -F "run" >/dev/null
 
 test -x /usr/bin/cloudflared
 test -f /usr/share/man/man1/cloudflared.1
+test -d /var/lib/cloudflared
 test -f "$config"
 grep -F 'credentials-file:' "$config" >/dev/null
 grep -F 'token-file:' "$config" >/dev/null
