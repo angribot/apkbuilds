@@ -30,6 +30,13 @@ build() {
 	envsubst < cloudflared_man_template > cloudflared.1
 }
 
+openrc() {
+	pkgdesc="$pkgdesc - OpenRC service"
+	depends="openrc $pkgname=$pkgver-r$pkgrel"
+	install_if="$pkgname=$pkgver-r$pkgrel openrc"
+	amove etc/init.d
+}
+
 check() {
 	go test -mod=vendor -buildmode=default ./...
 }

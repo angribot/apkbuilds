@@ -49,6 +49,13 @@ class CloudflaredPackageTest(unittest.TestCase):
         )
         self.assertIn('install -d "$pkgdir"/var/lib/cloudflared', APKBUILD)
 
+    def test_openrc_subpackage_declares_runtime_dependencies(self):
+        self.assertIn('depends="openrc $pkgname=$pkgver-r$pkgrel"', APKBUILD)
+        self.assertIn(
+            'install_if="$pkgname=$pkgver-r$pkgrel openrc"', APKBUILD
+        )
+        self.assertIn("amove etc/init.d", APKBUILD)
+
     def test_openrc_service_uses_fixed_config_and_unprivileged_account(self):
         self.assertIn("command=/usr/bin/cloudflared", INITD)
         self.assertIn("command_user=cloudflared:cloudflared", INITD)
