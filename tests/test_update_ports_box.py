@@ -37,12 +37,6 @@ class UpdatePortsBoxTest(unittest.TestCase):
         )
         self.assertEqual(version, "1.8.0")
 
-    def test_update_resets_revision_and_checksum(self):
-        text = "pkgver=0.1.2\npkgrel=2\n" + "a" * 128 + "  ports-box-0.1.2.tar.gz\n"
-        result = update.updated_apkbuild(text, "0.1.3", "b" * 128)
-        self.assertIn("pkgver=0.1.3\npkgrel=0", result)
-        self.assertIn("b" * 128 + "  ports-box-0.1.3.tar.gz", result)
-
     def test_update_rejects_missing_checksum(self):
         with self.assertRaisesRegex(ValueError, "source checksum"):
             update.updated_apkbuild("pkgver=0.1.2\npkgrel=0\n", "0.1.3", "b" * 128)

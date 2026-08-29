@@ -65,8 +65,5 @@ set -- "$@" \
   -v "$repository_key:/keys/apkbuilds.rsa.pub:ro" \
   alpine:edge \
     /workspace/scripts/operations/verify-repository.sh \
-      --arch "$arch"
-if [ "$install_declared_builds" = true ]; then
-  set -- "$@" --install-declared-builds
-fi
+      "$arch" "$install_declared_builds"
 "$@"

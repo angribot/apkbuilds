@@ -103,6 +103,7 @@ def install_fake_docker(fake_bin):
             "/keys/apkbuilds.rsa.pub": "APKBUILDS_REPOSITORY_KEY",
             "/private-key": "APKBUILDS_PRIVATE_KEY",
             "/new": "APKBUILDS_OUTPUT",
+            "/var/cache/distfiles": "APKBUILDS_DISTFILES",
         }
         for target, name in names.items():
             if target in mounts:

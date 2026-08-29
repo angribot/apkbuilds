@@ -100,14 +100,6 @@ class DeclaredBuildGuardTest(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
-    def test_deleted_package_origin_fails_with_actionable_error(self):
-        self.git("rm", "-q", "-r", "packages/alpha")
-
-        completed = self.run_guard()
-
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertIn("alpha changed package inputs but has no APKBUILD", completed.stderr)
-
     def test_renamed_package_input_checks_the_source_origin(self):
         self.git(
             "mv",

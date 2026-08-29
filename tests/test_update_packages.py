@@ -15,7 +15,6 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "update-packages.sh"
 
 PACKAGE_ORIGINS = read_manifest()
-UPDATER_ORIGINS = tuple(entry for entry in PACKAGE_ORIGINS if entry[1] != "-")
 
 
 class UpdatePackagesTest(unittest.TestCase):
@@ -46,19 +45,17 @@ class UpdatePackagesTest(unittest.TestCase):
         mode = (root / "scripts/update-packages.sh").stat().st_mode
         (root / "scripts/update-packages.sh").chmod(mode | stat.S_IXUSR)
         (root / "packages/updaters").write_text(
-            "# package-origin|updater|updater-test\n"
+            "# package-origin|updater\n"
             + "".join("|".join(entry) + "\n" for entry in entries)
         )
         (root / "README").write_text("initial\n")
 
-        for package_origin, updater, test in entries:
+        for package_origin, updater in entries:
             apkbuild_path = root / "packages" / package_origin / "APKBUILD"
             apkbuild_path.parent.mkdir(parents=True)
             apkbuild_path.write_text(
                 f"pkgname={package_origin}\npkgver=1.0.0\npkgrel=0\n"
             )
-            if updater == "-":
-                continue
             updater_path = root / updater
             updater_path.parent.mkdir(parents=True, exist_ok=True)
             updater_path.write_text(
@@ -78,15 +75,11 @@ if package_origin in updated:
     print("2.0.0")
 """
             )
-            test_path = root / test
-            test_path.parent.mkdir(parents=True, exist_ok=True)
-            test_path.write_text("# updater behavior test registration\n")
-
         self.git(root, "init", "-q", "-b", "main")
         self.git(root, "config", "user.name", "test")
         self.git(root, "config", "user.email", "test@example.com")
         self.git(root, "config", "commit.gpgsign", "false")
-        self.git(root, "add", "README", "packages", "scripts", "tests")
+        self.git(root, "add", "README", "packages", "scripts")
         self.git(root, "commit", "-q", "-m", "initial")
 
         remote = root / "remote.git"
@@ -143,19 +136,6 @@ if package_origin in updated:
         self.assertEqual(self.remote_history(remote), ["initial"])
         self.assertEqual(self.push_count(push_log), 0)
 
-    def test_origin_without_updater_is_explicitly_skipped(self):
-        entries = (*PACKAGE_ORIGINS, ("manual", "-", "-"))
-        root, _ = self.create_checkout(entries)
-
-        completed = self.run_updater(root)
-
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertIn("manual has no updater; skipping", completed.stdout)
-        self.assertEqual(
-            (root / "invocations.log").read_text().splitlines(),
-            [origin for origin, _, _ in UPDATER_ORIGINS],
-        )
-
     def test_unregistered_package_origin_fails_before_updates_run(self):
         root, _ = self.create_checkout()
         missing = root / "packages/manual/APKBUILD"
@@ -168,18 +148,17 @@ if package_origin in updated:
         self.assertIn("manual is missing from updater manifest", completed.stderr)
         self.assertFalse((root / "invocations.log").exists())
 
-    def test_updater_without_test_registration_fails_before_updates_run(self):
+    def test_missing_updater_fails_before_updates_run(self):
         entries = list(PACKAGE_ORIGINS)
-        origin, updater, _ = entries[0]
-        entries[0] = (origin, updater, "-")
+        origin, _ = entries[0]
+        entries[0] = (origin, "scripts/missing.py")
         root, _ = self.create_checkout(tuple(entries))
+        (root / "scripts/missing.py").unlink()
 
         completed = self.run_updater(root)
 
         self.assertNotEqual(completed.returncode, 0)
-        self.assertIn(
-            f"{origin} updater has no test registration", completed.stderr
-        )
+        self.assertIn(f"{origin} updater not found", completed.stderr)
         self.assertFalse((root / "invocations.log").exists())
 
     def test_multiple_successful_origins_make_distinct_commits_and_one_push(self):
@@ -220,7 +199,7 @@ if package_origin in updated:
         self.assertEqual(completed.returncode, 1, completed.stderr)
         self.assertEqual(
             (root / "invocations.log").read_text().splitlines(),
-            [package_origin for package_origin, _, _ in UPDATER_ORIGINS],
+            [package_origin for package_origin, _ in PACKAGE_ORIGINS],
         )
         self.assertEqual(self.local_history(root), expected_history)
         self.assertEqual(self.remote_history(remote), expected_history)

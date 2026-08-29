@@ -20,8 +20,8 @@ has_updates=0
 validate_updater_manifest() {
   if ! awk -F '|' '
     /^[[:space:]]*$/ || /^#/ { next }
-    NF != 3 {
-      printf "::error::invalid updater manifest line %d: expected package-origin|updater|updater-test\n", NR
+    NF != 2 {
+      printf "::error::invalid updater manifest line %d: expected package-origin|updater\n", NR
       invalid = 1
       next
     }
@@ -51,7 +51,7 @@ validate_updater_manifest() {
     fi
   done
 
-  while IFS='|' read -r _vum_origin _vum_updater _vum_test; do
+  while IFS='|' read -r _vum_origin _vum_updater; do
     case "$_vum_origin" in
       ''|'#'*) continue ;;
     esac
@@ -60,26 +60,11 @@ validate_updater_manifest() {
       return 1
     fi
     if [ -z "$_vum_updater" ]; then
-      echo "::error::$_vum_origin has no updater registration; use - for none" >&2
+      echo "::error::$_vum_origin has no updater registration" >&2
       return 1
-    fi
-    if [ "$_vum_updater" = "-" ]; then
-      if [ "$_vum_test" != "-" ]; then
-        echo "::error::$_vum_origin without an updater must register test as -" >&2
-        return 1
-      fi
-      continue
     fi
     if [ ! -f "$_vum_updater" ]; then
       echo "::error::$_vum_origin updater not found: $_vum_updater" >&2
-      return 1
-    fi
-    if [ -z "$_vum_test" ] || [ "$_vum_test" = "-" ]; then
-      echo "::error::$_vum_origin updater has no test registration" >&2
-      return 1
-    fi
-    if [ ! -f "$_vum_test" ]; then
-      echo "::error::$_vum_origin updater test not found: $_vum_test" >&2
       return 1
     fi
   done < "$updater_manifest"
@@ -141,14 +126,10 @@ git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
 # Preserve manifest order: the updater is a single writer, so each origin's
 # local commit is isolated before the next updater changes the checkout.
-while IFS='|' read -r _main_package_origin _main_updater _main_test; do
+while IFS='|' read -r _main_package_origin _main_updater; do
   case "$_main_package_origin" in
     ''|'#'*) continue ;;
   esac
-  if [ "$_main_updater" = "-" ]; then
-    echo "$_main_package_origin has no updater; skipping"
-    continue
-  fi
 
   if process_update \
     "$_main_package_origin" "$_main_updater" \

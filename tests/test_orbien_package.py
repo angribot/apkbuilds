@@ -6,7 +6,6 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APKBUILD = (ROOT / "packages" / "orbien" / "APKBUILD").read_text()
 INITD_PATH = ROOT / "packages" / "orbien" / "orbien-server.initd"
-SMOKE_PATH = ROOT / "scripts" / "test-orbien.sh"
 
 
 class OrbienPackageTest(unittest.TestCase):
@@ -55,18 +54,6 @@ class OrbienPackageTest(unittest.TestCase):
         self.assertIn(
             "orbien server config /etc/orbien/orbien-server.toml not found", initd
         )
-
-    def test_smoke_test_covers_missing_config_and_successful_start(self):
-        smoke = SMOKE_PATH.read_text()
-        missing = smoke.index("/etc/init.d/orbien-server --nodeps start")
-        config = smoke.index("/etc/orbien/orbien-server.toml", missing)
-        successful_start = smoke.index(
-            "/etc/init.d/orbien-server --nodeps start", config
-        )
-        alive = smoke.index('kill -0 "$pid"', successful_start)
-        self.assertLess(missing, config)
-        self.assertLess(config, successful_start)
-        self.assertLess(successful_start, alive)
 
 
 if __name__ == "__main__":

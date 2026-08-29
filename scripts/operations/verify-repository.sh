@@ -5,50 +5,22 @@
 # offline and retains network access only for installation dependencies.
 set -eu
 
-usage() {
-  cat >&2 <<'USAGE'
-usage: operations/verify-repository.sh --arch ARCH|all \
-  [--install-declared-builds]
-USAGE
+[ "$#" -eq 2 ] || {
+  printf '%s\n' 'internal verify operation requires ARCH INSTALL_DECLARED_BUILDS' >&2
+  exit 2
 }
+requested_arch=$1
+install_declared_builds=$2
+case "$install_declared_builds" in
+  true|false) ;;
+  *) exit 2 ;;
+esac
 
 pages=${APKBUILDS_PAGES:-/pages}
 workspace=${APKBUILDS_WORKSPACE:-/workspace}
-requested_arch=
 repository_key=${APKBUILDS_REPOSITORY_KEY:-/keys/apkbuilds.rsa.pub}
-install_declared_builds=false
 key_directory=${APKBUILDS_KEY_DIRECTORY:-/etc/apk/keys}
 repositories_file=${APKBUILDS_REPOSITORIES_FILE:-/etc/apk/repositories}
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --arch)
-      [ "$#" -ge 2 ] || { usage; exit 2; }
-      requested_arch=$2
-      shift 2
-      ;;
-    --install-declared-builds)
-      install_declared_builds=true
-      shift
-      ;;
-    --help)
-      usage >&1
-      exit 0
-      ;;
-    *)
-      usage
-      exit 2
-      ;;
-  esac
-done
-
-[ -n "$requested_arch" ] || {
-  usage
-  exit 2
-}
-case "$requested_arch" in
-  x86_64|aarch64|all) ;;
-  *) usage; exit 2 ;;
-esac
 
 arch=all
 origin=all

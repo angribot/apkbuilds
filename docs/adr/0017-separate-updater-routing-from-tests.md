@@ -1,0 +1,3 @@
+# Separate updater routing from test registration
+
+The updater manifest records only runtime routing from each package origin to its updater; unittest discovery owns test registration and execution. Requiring production automation to name a test file coupled the runner to test layout without proving that the test was discovered, relevant, or passing, while the unused no-updater form added a hypothetical path with no package origin using it. This supersedes ADR-0016 only where it retained updater-test registration from ADR-0011; manifest ordering, per-origin local commits, failure isolation, and one batch push remain unchanged.
