@@ -5,3 +5,4 @@ tirith|scripts/update-tirith.py|tests/test_update_tirith.py
 ports-box|scripts/update-ports-box.py|tests/test_update_ports_box.py
 orbien|scripts/update-orbien.py|tests/test_update_orbien.py
 realm|scripts/update-realm.py|tests/test_update_realm.py
+cloudflared|scripts/update-cloudflared.py|tests/test_update_cloudflared.py

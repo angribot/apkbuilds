@@ -42,7 +42,15 @@ class PackageUpdateTest(unittest.TestCase):
         entries = read_manifest()
         self.assertEqual(
             [origin for origin, _, _ in entries],
-            ["gnupg", "zerostack", "tirith", "ports-box", "orbien", "realm"],
+            [
+                "gnupg",
+                "zerostack",
+                "tirith",
+                "ports-box",
+                "orbien",
+                "realm",
+                "cloudflared",
+            ],
         )
 
     def test_manifest_registers_every_origin_updater_and_test(self):
