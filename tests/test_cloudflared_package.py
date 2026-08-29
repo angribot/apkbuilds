@@ -6,7 +6,6 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 PACKAGE = ROOT / "packages" / "cloudflared"
 APKBUILD = (PACKAGE / "APKBUILD").read_text()
 INITD = (PACKAGE / "cloudflared.initd").read_text()
-CONFD = (PACKAGE / "cloudflared.confd").read_text()
 PRE_INSTALL = (PACKAGE / "cloudflared.pre-install").read_text()
 CONFIG = (PACKAGE / "config.yml").read_text()
 SMOKE = (ROOT / "scripts" / "test-cloudflared.sh").read_text()
@@ -45,10 +44,6 @@ class CloudflaredPackageTest(unittest.TestCase):
             APKBUILD,
         )
         self.assertIn(
-            'install -D -m755 "$srcdir"/$pkgname.confd "$pkgdir"/etc/conf.d/$pkgname',
-            APKBUILD,
-        )
-        self.assertIn(
             'install -D -m644 "$srcdir"/config.yml "$pkgdir"/etc/$pkgname/config.yml',
             APKBUILD,
         )
@@ -62,7 +57,7 @@ class CloudflaredPackageTest(unittest.TestCase):
         self.assertNotRegex(INITD, r"(?i)(setcap|capabilities|root:root)")
         self.assertIn(
             'command_args="tunnel --config /etc/cloudflared/config.yml run"',
-            CONFD,
+            INITD,
         )
 
     def test_preinstall_creates_system_account(self):
@@ -93,10 +88,12 @@ class CloudflaredPackageTest(unittest.TestCase):
         self.assertIn('cloudflared --version | grep -F "$version"', SMOKE)
         self.assertIn("/usr/share/man/man1/cloudflared.1", SMOKE)
         self.assertIn("/etc/cloudflared/config.yml", SMOKE)
-        self.assertIn("/etc/init.d/cloudflared --nodeps start", SMOKE)
+        self.assertIn("service=/etc/init.d/cloudflared", SMOKE)
+        self.assertIn('"$service" --nodeps start', SMOKE)
         self.assertIn("command_user=cloudflared:cloudflared", SMOKE)
         self.assertRegex(SMOKE, r"grep -F.*credentials-file")
         self.assertRegex(SMOKE, r"grep -F.*token-file")
+        self.assertIn("operator-supplied test daemon", SMOKE)
 
     def test_build_automation_runs_package_smoke_test(self):
         self.assertIn(

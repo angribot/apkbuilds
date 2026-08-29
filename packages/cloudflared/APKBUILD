@@ -14,7 +14,6 @@ source="$pkgname-$pkgver.tar.gz::https://github.com/cloudflare/cloudflared/archi
 	goflags.patch
 	config.yml
 	$pkgname.initd
-	$pkgname.confd
 	"
 options="!check net" # upstream tests require privileged ICMP sockets
 
@@ -40,7 +39,6 @@ package() {
 	install -D -m644 ./cloudflared.1 "$pkgdir"/usr/share/man/man1/cloudflared.1
 
 	install -D -m755 "$srcdir"/$pkgname.initd "$pkgdir"/etc/init.d/$pkgname
-	install -D -m755 "$srcdir"/$pkgname.confd "$pkgdir"/etc/conf.d/$pkgname
 	install -D -m644 "$srcdir"/config.yml "$pkgdir"/etc/$pkgname/config.yml
 }
 
@@ -48,6 +46,5 @@ sha512sums="
 a4f7709a8a1faeea83f4e46f041e848d4505474f6466acdb90d95dd73384aeb1b81bf0367c85d6ad79f0c554d2a2afbffbc164a40c73c9e780da19d3e587fa18  cloudflared-2026.8.2.tar.gz
 0643b4f99ccbe59dc19a46c4cf22d6e8da33ceadb8f316f40552c99f412fd358fb261ea575b6b4f5438ab8f110e8ddc337c0b33245b0743d78e91fa588fbd34f  goflags.patch
 ba4038ee0c59e3c4293df8df718516e1695e7700b54e3a7ea15edbd1a7ab8c7a4665a5eeb68bc5287a3fbb398b672138d3b4b984c4970dec4b664eab6ea28e97  config.yml
-18197671cc3884e8d86bb865ebe64016f20170dd778d4a385be219bf2aa2de76e32ace942475e47093b9afca96ae3f98a9fda1ecf14c876c8cfbef92a9834a76  cloudflared.initd
-47c71a328d49f3d35dd6e0268e1d734cd21ecc84b24459f77a46df7632f9a8fdb7817cf49187f965c13c94017e4454897caa99ca12b41037dfe0455bb156ef09  cloudflared.confd
+9ac541c70bba0bdaf136a7a7d8e1d6b8486488a66075ea7fcd7b6718aafe7decd27ad56a3eb8ddcb6e95975f09704de7e148572e3042a6c3a9138c214312a2fb  cloudflared.initd
 "

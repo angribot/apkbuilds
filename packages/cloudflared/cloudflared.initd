@@ -2,6 +2,7 @@
 
 name=cloudflared
 command=/usr/bin/cloudflared
+command_args="tunnel --config /etc/cloudflared/config.yml run"
 command_user=cloudflared:cloudflared
 command_background="yes"
 pidfile=/run/${RC_SVCNAME}.pid
