@@ -100,7 +100,7 @@ class CloudflaredPackageTest(unittest.TestCase):
         self.assertIn("/etc/cloudflared/config.yml", SMOKE)
         self.assertIn("test -d /var/lib/cloudflared", SMOKE)
         self.assertIn("service=/etc/init.d/cloudflared", SMOKE)
-        self.assertIn('"$service" --nodeps start', SMOKE)
+        self.assertIn('RC_SVCNAME=cloudflared "$service" --nodeps start', SMOKE)
         self.assertIn("command_user=cloudflared:cloudflared", SMOKE)
         self.assertRegex(SMOKE, r"grep -F.*credentials-file")
         self.assertRegex(SMOKE, r"grep -F.*token-file")

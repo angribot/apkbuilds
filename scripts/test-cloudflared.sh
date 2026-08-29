@@ -31,7 +31,7 @@ grep -F 'directory=/var/lib/cloudflared' "$service" >/dev/null
 
 mkdir -p /run/openrc
 : > /run/openrc/softlevel
-if output=$("$service" --nodeps start 2>&1); then
+if output=$(RC_SVCNAME=cloudflared "$service" --nodeps start 2>&1); then
 	echo "expected the service to fail without operator configuration; got:" >&2
 	echo "$output" >&2
 	exit 1
@@ -47,7 +47,7 @@ echo "$output" | grep -F \
 config_backup=$(mktemp)
 cp "$config" "$config_backup"
 cleanup() {
-	"$service" --nodeps stop >/dev/null 2>&1 || true
+	RC_SVCNAME=cloudflared "$service" --nodeps stop >/dev/null 2>&1 || true
 	cat "$config_backup" > "$config"
 	rm -f "$config_backup" "$token_file"
 }
@@ -69,7 +69,7 @@ edge:
 token-file: $token_file
 EOF
 
-"$service" --nodeps start
+RC_SVCNAME=cloudflared "$service" --nodeps start
 sleep 1
 pid=$(cat /run/cloudflared.pid)
 kill -0 "$pid"
@@ -81,4 +81,4 @@ awk -v expected="$expected_uid" '
 test "$(readlink "/proc/$pid/cwd")" = /var/lib/cloudflared
 cap_eff=$(awk '$1 == "CapEff:" { print $2 }' "/proc/$pid/status")
 test "$cap_eff" = 0000000000000000
-"$service" --nodeps stop
+RC_SVCNAME=cloudflared "$service" --nodeps stop
