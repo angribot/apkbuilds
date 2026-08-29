@@ -2,4 +2,3 @@ __pycache__/
 *.py[cod]
 keys/*.rsa
 .cache/
-.scratch/
