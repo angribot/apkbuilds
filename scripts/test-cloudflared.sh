@@ -5,13 +5,14 @@
 #
 # This smoke test does not test a real tunnel connection using credentials or
 # an external Quick Tunnel: both require Cloudflare network access, neither of
-# which belongs in package CI. The successful lifecycle check uses an
-# operator-supplied test daemon shim instead.
+# which belongs in package CI. The successful lifecycle check uses a locally
+# unreachable edge and a syntactically valid test token instead.
 set -eu
 
 version=$1
 service=/etc/init.d/cloudflared
 config=/etc/cloudflared/config.yml
+token_file=/var/lib/cloudflared/smoke-token
 cloudflared --version | grep -F "$version" >/dev/null
 cloudflared tunnel --help | grep -F "run" >/dev/null
 
@@ -26,6 +27,7 @@ grep -F 'token-file:' "$config" >/dev/null
 grep -F 'command_user=cloudflared:cloudflared' "$service" >/dev/null
 grep -F 'command_args="tunnel --config /etc/cloudflared/config.yml run"' \
 	"$service" >/dev/null
+grep -F 'directory=/var/lib/cloudflared' "$service" >/dev/null
 
 mkdir -p /run/openrc
 : > /run/openrc/softlevel
@@ -42,41 +44,41 @@ echo "$output" | grep -F \
 	exit 1
 }
 
-service_backup=$(mktemp)
 config_backup=$(mktemp)
-test_daemon=$(mktemp)
-cp "$service" "$service_backup"
 cp "$config" "$config_backup"
 cleanup() {
 	"$service" --nodeps stop >/dev/null 2>&1 || true
-	cat "$service_backup" > "$service"
 	cat "$config_backup" > "$config"
-	rm -f "$service_backup" "$config_backup" "$test_daemon"
+	rm -f "$config_backup" "$token_file"
 }
 trap cleanup EXIT
 
-cat > "$test_daemon" <<'EOF'
-#!/bin/sh
-while :; do
-	sleep 1
-done
+# This is a generated, syntactically valid token for a nonexistent tunnel.
+# Pointing edge at an unreachable local port keeps the real daemon in its
+# retry loop without contacting Cloudflare.
+printf '%s\n' \
+	'eyJhIjoidGVzdC1hY2NvdW50IiwicyI6ImMyVmpjbVYwIiwidCI6IjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMSJ9' \
+	> "$token_file"
+chown cloudflared:cloudflared "$token_file"
+chmod 600 "$token_file"
+cat > "$config" <<EOF
+no-autoupdate: true
+no-prechecks: true
+edge:
+  - 127.0.0.1:9
+token-file: $token_file
 EOF
-chmod 755 "$test_daemon"
-sed -i "s#^command=/usr/bin/cloudflared\$#command=$test_daemon#" "$service"
 
-run_service_with_mode() {
-	mode=$1
-	printf '%s: /etc/cloudflared/test-credential\n' "$mode" > "$config"
-	"$service" --nodeps start
-	pid=$(cat /run/cloudflared.pid)
-	kill -0 "$pid"
-	expected_uid=$(id -u cloudflared)
-	awk -v expected="$expected_uid" '
-		$1 == "Uid:" { found = 1; if ($2 != expected) mismatch = 1 }
-		END { exit !found || mismatch }
-	' "/proc/$pid/status"
-	"$service" --nodeps stop
-}
-
-run_service_with_mode credentials-file
-run_service_with_mode token-file
+"$service" --nodeps start
+sleep 1
+pid=$(cat /run/cloudflared.pid)
+kill -0 "$pid"
+expected_uid=$(id -u cloudflared)
+awk -v expected="$expected_uid" '
+	$1 == "Uid:" { found = 1; if ($2 != expected) mismatch = 1 }
+	END { exit !found || mismatch }
+' "/proc/$pid/status"
+test "$(readlink "/proc/$pid/cwd")" = /var/lib/cloudflared
+cap_eff=$(awk '$1 == "CapEff:" { print $2 }' "/proc/$pid/status")
+test "$cap_eff" = 0000000000000000
+"$service" --nodeps stop

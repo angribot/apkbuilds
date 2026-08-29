@@ -54,6 +54,7 @@ class CloudflaredPackageTest(unittest.TestCase):
         self.assertIn("command_user=cloudflared:cloudflared", INITD)
         self.assertIn('command_background="yes"', INITD)
         self.assertIn("pidfile=/run/${RC_SVCNAME}.pid", INITD)
+        self.assertIn("directory=/var/lib/cloudflared", INITD)
         self.assertIn("need net", INITD)
         self.assertNotRegex(INITD, r"(?i)(setcap|capabilities|root:root)")
         self.assertIn(
@@ -96,7 +97,8 @@ class CloudflaredPackageTest(unittest.TestCase):
         self.assertIn("command_user=cloudflared:cloudflared", SMOKE)
         self.assertRegex(SMOKE, r"grep -F.*credentials-file")
         self.assertRegex(SMOKE, r"grep -F.*token-file")
-        self.assertIn("operator-supplied test daemon", SMOKE)
+        self.assertIn("syntactically valid test token", SMOKE)
+        self.assertIn("unreachable edge", SMOKE)
 
     def test_build_automation_runs_package_smoke_test(self):
         self.assertIn(
