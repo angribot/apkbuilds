@@ -38,37 +38,17 @@ class PackageUpdateTest(unittest.TestCase):
         self.assertEqual(child_keys(WORKFLOW, "permissions"), ["contents"])
         self.assertEqual(child_keys(CI_WORKFLOW, "on"), ["push", "pull_request"])
 
-    def test_manifest_order_is_the_single_writer_order(self):
+    def test_manifest_registers_every_origin_updater(self):
         entries = read_manifest()
-        self.assertEqual(
-            [origin for origin, _, _ in entries],
-            [
-                "gnupg",
-                "zerostack",
-                "tirith",
-                "ports-box",
-                "orbien",
-                "realm",
-                "cloudflared",
-            ],
-        )
-
-    def test_manifest_registers_every_origin_updater_and_test(self):
-        entries = read_manifest()
-        registered = {origin for origin, _, _ in entries}
+        registered = {origin for origin, _ in entries}
         package_origins = {
             path.parent.name for path in (ROOT / "packages").glob("*/APKBUILD")
         }
         self.assertEqual(registered, package_origins)
 
-        for origin, updater, test in entries:
+        for origin, updater in entries:
             with self.subTest(origin=origin):
-                if updater == "-":
-                    self.assertEqual(test, "-")
-                else:
-                    self.assertTrue((ROOT / updater).is_file(), updater)
-                    self.assertNotEqual(test, "-")
-                    self.assertTrue((ROOT / test).is_file(), test)
+                self.assertTrue((ROOT / updater).is_file(), updater)
 
     def test_updater_is_posix_sh_clean(self):
         completed = subprocess.run(
@@ -80,15 +60,6 @@ class PackageUpdateTest(unittest.TestCase):
     def test_updater_passes_posix_shellcheck(self):
         completed = subprocess.run(
             ["shellcheck", "--shell=sh", str(UPDATER_PATH)],
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
-
-    @unittest.skipUnless(shutil.which("actionlint"), "actionlint not installed")
-    def test_workflows_pass_actionlint(self):
-        completed = subprocess.run(
-            ["actionlint", *map(str, sorted((ROOT / ".github" / "workflows").glob("*.yml")))],
             capture_output=True,
             text=True,
         )

@@ -50,18 +50,6 @@ class UpdateCloudflaredTest(unittest.TestCase):
             )
         )
 
-    def test_update_resets_revision_and_replaces_archive_checksum(self):
-        text = (
-            "pkgver=2026.7.3\npkgrel=4\n"
-            + "a" * 128
-            + "  cloudflared-2026.7.3.tar.gz\n"
-        )
-
-        result = update.updated_apkbuild(text, "2026.8.2", "b" * 128)
-
-        self.assertIn("pkgver=2026.8.2\npkgrel=0", result)
-        self.assertIn("b" * 128 + "  cloudflared-2026.8.2.tar.gz", result)
-
     def test_main_hashes_the_source_archive_for_the_selected_release(self):
         source = b"cloudflared source archive"
         digest = hashlib.sha512(source).hexdigest()

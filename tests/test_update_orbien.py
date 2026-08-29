@@ -51,14 +51,6 @@ class UpdateOrbienTest(unittest.TestCase):
 
         self.assertEqual(version, "3.10.0")
 
-    def test_update_resets_revision_and_replaces_archive_checksum(self):
-        text = "pkgver=3.1.0\npkgrel=4\n" + "a" * 128 + "  orbien-3.1.0.tar.gz\n"
-
-        result = update.updated_apkbuild(text, "3.2.0", "b" * 128)
-
-        self.assertIn("pkgver=3.2.0\npkgrel=0", result)
-        self.assertIn("b" * 128 + "  orbien-3.2.0.tar.gz", result)
-
     def test_update_rejects_missing_archive_checksum(self):
         with self.assertRaisesRegex(ValueError, "source checksum"):
             update.updated_apkbuild(

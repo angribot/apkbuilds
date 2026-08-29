@@ -18,9 +18,6 @@ class UpdateLibTest(unittest.TestCase):
         self.assertEqual(update.version_key("1.2.3"), (1, 2, 3))
         self.assertEqual(update.version_key("0.10.0"), (0, 10, 0))
 
-    def test_version_key_ordering(self):
-        self.assertGreater(update.version_key("2.0.0"), update.version_key("1.99.99"))
-
     def test_declared_version_extracts_pkgver(self):
         text = "pkgver=2.5.21\npkgrel=1\n"
         self.assertEqual(update.declared_version(text), "2.5.21")

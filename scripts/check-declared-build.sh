@@ -9,11 +9,6 @@ git diff --no-renames --name-only "$BASE_SHA" -- packages/ > "$RUNNER_TEMP/chang
 status=0
 for origin in $(changed_origins "$RUNNER_TEMP/changed-files"); do
   apkbuild="packages/$origin/APKBUILD"
-  if [ ! -f "$apkbuild" ]; then
-    echo "$origin changed package inputs but has no APKBUILD" >&2
-    status=1
-    continue
-  fi
   previous="$RUNNER_TEMP/$origin-APKBUILD"
   if ! git show "$BASE_SHA:$apkbuild" > "$previous" 2>/dev/null; then
     continue

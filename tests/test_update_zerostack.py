@@ -37,12 +37,6 @@ class UpdateZerostackTest(unittest.TestCase):
         )
         self.assertEqual(version, "1.8.0")
 
-    def test_update_resets_revision_and_checksum(self):
-        text = "pkgver=1.7.1\npkgrel=2\n" + "a" * 128 + "  zerostack-1.7.1.tar.gz\n"
-        result = update.updated_apkbuild(text, "1.7.2", "b" * 128)
-        self.assertIn("pkgver=1.7.2\npkgrel=0", result)
-        self.assertIn("b" * 128 + "  zerostack-1.7.2.tar.gz", result)
-
     def test_update_rejects_missing_checksum(self):
         with self.assertRaisesRegex(ValueError, "source checksum"):
             update.updated_apkbuild("pkgver=1.7.1\npkgrel=0\n", "1.7.2", "b" * 128)

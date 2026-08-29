@@ -75,14 +75,7 @@ docker run --rm \
   -w /workspace \
   alpine:edge \
     /workspace/scripts/operations/build-package-family.sh \
-      --arch "$arch" \
-      --origin "$origin" \
-      --published "$published" \
-      --source-revision "$source_revision" \
-      --workspace /workspace \
-      --output /new \
-      --repository-key /keys/apkbuilds.rsa.pub \
-      --distfiles /var/cache/distfiles
+      "$arch" "$origin" "$published" "$source_revision"
 
 stage=outcome
 candidate=$output/built/$arch/$origin

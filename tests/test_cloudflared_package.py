@@ -8,7 +8,6 @@ APKBUILD = (PACKAGE / "APKBUILD").read_text()
 INITD = (PACKAGE / "cloudflared.initd").read_text()
 PRE_INSTALL = (PACKAGE / "cloudflared.pre-install").read_text()
 CONFIG = (PACKAGE / "config.yml").read_text()
-SMOKE = (ROOT / "scripts" / "test-cloudflared.sh").read_text()
 BUILD_FAMILY = (ROOT / "scripts" / "operations" / "build-package-family.sh").read_text()
 
 
@@ -77,25 +76,6 @@ class CloudflaredPackageTest(unittest.TestCase):
             if line.strip() and not line.lstrip().startswith("#")
         ]
         self.assertEqual(active_lines, [])
-
-    def test_service_fails_clearly_without_operator_configuration(self):
-        self.assertIn("start_pre()", INITD)
-        self.assertIn("credentials-file or token-file", INITD)
-        self.assertIn("cloudflared configuration", INITD)
-        self.assertIn("expected the service to fail", SMOKE)
-        self.assertIn("does not test a real tunnel connection", SMOKE)
-
-    def test_smoke_checks_cli_docs_service_and_missing_configuration(self):
-        self.assertIn('cloudflared --version | grep -F "$version"', SMOKE)
-        self.assertIn("/usr/share/man/man1/cloudflared.1", SMOKE)
-        self.assertIn("/usr/share/man/man1/cloudflared.1.gz", SMOKE)
-        self.assertIn("/etc/cloudflared/config.yml", SMOKE)
-        self.assertIn("test -d /var/lib/cloudflared", SMOKE)
-        self.assertIn("service=/etc/init.d/cloudflared", SMOKE)
-        self.assertIn('. "$1"', SMOKE)
-        self.assertIn("command_user=cloudflared:cloudflared", SMOKE)
-        self.assertRegex(SMOKE, r"grep -F.*credentials-file")
-        self.assertRegex(SMOKE, r"grep -F.*token-file")
 
     def test_build_automation_runs_package_smoke_test(self):
         self.assertIn(

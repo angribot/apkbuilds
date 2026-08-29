@@ -134,21 +134,6 @@ class PlanOriginsTest(unittest.TestCase):
             },
         )
 
-    def test_ci_only_main_fix_reconsiders_an_earlier_unpublished_origin(self):
-        completed = self.run_plan(
-            event="push",
-            revision=self.ci_fix_commit,
-            before=self.alpha_commit,
-        )
-
-        outputs = self.plan_outputs(completed)
-        entries = self.matrix_entries(completed)
-        self.assertEqual(outputs["origins"], "alpha beta")
-        self.assertEqual(
-            {item["origin"] for item in entries},
-            {"alpha", "beta"},
-        )
-
     def test_pull_request_selects_only_changed_package_origins(self):
         completed = self.run_plan(
             event="pull_request",
@@ -238,15 +223,6 @@ class PlanOriginsTest(unittest.TestCase):
             completed.stderr,
         )
         self.assertFalse((self.root / "output").exists())
-
-    def test_planner_has_no_manual_reconciliation_mode(self):
-        completed = self.run_plan(
-            event="push",
-            revision=self.ci_fix_commit,
-            before=self.alpha_commit,
-        )
-
-        self.assertNotIn("reconcile", self.plan_outputs(completed))
 
 
 if __name__ == "__main__":

@@ -4,57 +4,18 @@
 # The public operation module owns this script's paths and mounts.
 set -eu
 
-usage() {
-  cat >&2 <<'USAGE'
-usage: operations/build-package-family.sh --arch ARCH --origin ORIGIN \
-  --published URL --source-revision REVISION --workspace DIR --output DIR \
-  --repository-key FILE --distfiles DIR
-USAGE
-}
-
-arch=
-origin=
-published=
-source_revision=
-workspace=
-output=
-repository_key=
-distfiles=
-
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --arch|--origin|--published|--source-revision|--workspace|--output|\
-    --repository-key|--distfiles)
-      [ "$#" -ge 2 ] || { usage; exit 2; }
-      case "$1" in
-        --arch) arch=$2 ;;
-        --origin) origin=$2 ;;
-        --published) published=$2 ;;
-        --source-revision) source_revision=$2 ;;
-        --workspace) workspace=$2 ;;
-        --output) output=$2 ;;
-        --repository-key) repository_key=$2 ;;
-        --distfiles) distfiles=$2 ;;
-      esac
-      shift 2
-      ;;
-    --help)
-      usage >&1
-      exit 0
-      ;;
-    *)
-      usage
-      exit 2
-      ;;
-  esac
-done
-
-[ -n "$arch" ] && [ -n "$origin" ] && [ -n "$published" ] && \
-  [ -n "$source_revision" ] && [ -n "$workspace" ] && [ -n "$output" ] && \
-  [ -n "$repository_key" ] && [ -n "$distfiles" ] || {
-  usage
+[ "$#" -eq 4 ] || {
+  printf '%s\n' 'internal build operation requires ARCH ORIGIN PUBLISHED SOURCE_REVISION' >&2
   exit 2
 }
+arch=$1
+origin=$2
+published=$3
+source_revision=$4
+workspace=${APKBUILDS_WORKSPACE:-/workspace}
+output=${APKBUILDS_OUTPUT:-/new}
+repository_key=${APKBUILDS_REPOSITORY_KEY:-/keys/apkbuilds.rsa.pub}
+distfiles=${APKBUILDS_DISTFILES:-/var/cache/distfiles}
 
 stage=arguments
 work=
