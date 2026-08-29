@@ -27,7 +27,7 @@ class CloudflaredPackageTest(unittest.TestCase):
         self.assertIn('makedepends="go gettext"', APKBUILD)
         self.assertIn("go mod vendor", APKBUILD)
         self.assertIn(
-            'export CGO_ENABLED=0 GOFLAGS="-mod=vendor -trimpath" VERSION DATE', APKBUILD
+            'export CGO_ENABLED=0 GOFLAGS="$GOFLAGS -mod=vendor -trimpath" VERSION DATE', APKBUILD
         )
         self.assertIn('make VERSION="$VERSION" DATE="$DATE" cloudflared', APKBUILD)
         self.assertIn('envsubst < cloudflared_man_template > cloudflared.1', APKBUILD)

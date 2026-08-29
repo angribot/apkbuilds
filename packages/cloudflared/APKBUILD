@@ -25,7 +25,7 @@ prepare() {
 build() {
 	VERSION="$pkgver"
 	DATE=$(date -u '+%Y-%m-%d-%H%M UTC' -d @"$SOURCE_DATE_EPOCH")
-	export CGO_ENABLED=0 GOFLAGS="-mod=vendor -trimpath" VERSION DATE
+	export CGO_ENABLED=0 GOFLAGS="$GOFLAGS -mod=vendor -trimpath" VERSION DATE
 	make VERSION="$VERSION" DATE="$DATE" cloudflared
 	envsubst < cloudflared_man_template > cloudflared.1
 }
