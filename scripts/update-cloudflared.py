@@ -14,6 +14,20 @@ APKBUILD = ROOT / "packages/cloudflared/APKBUILD"
 VERSION_TAG = re.compile(
     r"([0-9]{4}\.(?:[1-9]|1[0-2])\.(?:0|[1-9][0-9]*))"
 )
+RELEASE_PAGE_SIZE = 100
+
+
+def upstream_releases():
+    page = 1
+    while True:
+        url = RELEASES if page == 1 else f"{RELEASES}&page={page}"
+        releases = json.loads(download(url))
+        if not isinstance(releases, list):
+            raise ValueError("unexpected GitHub releases response")
+        yield from releases
+        if len(releases) < RELEASE_PAGE_SIZE:
+            return
+        page += 1
 
 
 def newest_eligible_release(releases):
@@ -52,7 +66,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     text = APKBUILD.read_text()
-    releases = json.loads(download(RELEASES))
+    releases = upstream_releases()
     version = newest_eligible_release(releases)
     declared = declared_version(text)
     if version is None or version_key(version) <= version_key(declared):

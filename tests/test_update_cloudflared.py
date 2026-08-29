@@ -86,6 +86,30 @@ class UpdateCloudflaredTest(unittest.TestCase):
         self.assertIn("pkgver=2026.8.2\npkgrel=0", text)
         self.assertIn(digest + "  cloudflared-2026.8.2.tar.gz", text)
 
+    def test_main_searches_past_the_first_release_page(self):
+        source = b"cloudflared paginated source archive"
+        apkbuild = self.temporary_apkbuild("2025.1.0")
+        first_page = [release(f"2025.1.{patch}") for patch in range(100)]
+
+        def download(url):
+            if url == update.RELEASES:
+                return json.dumps(first_page).encode()
+            if url == update.RELEASES + "&page=2":
+                return json.dumps([release("2026.2.0")]).encode()
+            self.assertEqual(
+                url,
+                "https://github.com/cloudflare/cloudflared/"
+                "archive/refs/tags/2026.2.0.tar.gz",
+            )
+            return source
+
+        with mock.patch.object(update, "download", side_effect=download), mock.patch.object(
+            update, "APKBUILD", apkbuild
+        ), redirect_stdout(StringIO()):
+            update.main([])
+
+        self.assertIn("pkgver=2026.2.0\npkgrel=0", apkbuild.read_text())
+
     def test_check_leaves_package_origin_unchanged_without_newer_release(self):
         apkbuild = self.temporary_apkbuild("2026.8.2")
         original = apkbuild.read_text()

@@ -88,6 +88,7 @@ class CloudflaredPackageTest(unittest.TestCase):
     def test_smoke_checks_cli_docs_service_and_missing_configuration(self):
         self.assertIn('cloudflared --version | grep -F "$version"', SMOKE)
         self.assertIn("/usr/share/man/man1/cloudflared.1", SMOKE)
+        self.assertIn("/usr/share/man/man1/cloudflared.1.gz", SMOKE)
         self.assertIn("/etc/cloudflared/config.yml", SMOKE)
         self.assertIn("test -d /var/lib/cloudflared", SMOKE)
         self.assertIn("service=/etc/init.d/cloudflared", SMOKE)
