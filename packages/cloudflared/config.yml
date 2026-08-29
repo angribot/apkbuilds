@@ -1,0 +1,14 @@
+# cloudflared configuration file
+#
+# Configure one of these operator-supplied tunnel modes, then enable the
+# cloudflared service. Keep credential files readable by cloudflared only.
+#
+# Named tunnel with a credentials file:
+# tunnel: TUNNEL-UUID
+# credentials-file: /etc/cloudflared/TUNNEL-UUID.json
+#
+# Remotely managed tunnel with a token file:
+# token-file: /etc/cloudflared/tunnel-token
+#
+# This file intentionally contains comments only so installing the package
+# cannot establish a tunnel automatically.

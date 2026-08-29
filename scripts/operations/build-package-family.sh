@@ -173,6 +173,10 @@ case "$origin" in
   orbien) "$workspace/scripts/test-orbien.sh" ;;
   ports-box) "$workspace/scripts/test-ports-box-service.sh" ;;
   realm) "$workspace/scripts/test-realm-service.sh" ;;
+  cloudflared)
+    "$workspace/scripts/test-cloudflared.sh" \
+      "$(apkbuild_field pkgver "$workspace/packages/cloudflared/APKBUILD")"
+    ;;
   tirith)
     "$workspace/scripts/test-tirith.sh" \
       "$(apkbuild_field pkgver "$workspace/packages/tirith/APKBUILD")"

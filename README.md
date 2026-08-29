@@ -37,6 +37,7 @@ Alpine releases are not supported.
 
 | Package origin | Installable packages | Description |
 | --- | --- | --- |
+| [`cloudflared`](packages/cloudflared/) | `cloudflared`, `cloudflared-doc`, `cloudflared-openrc` | Cloudflare Tunnel client |
 | [`gnupg`](packages/gnupg/) | `gnupg`, `gnupg-doc`, `gnupg-lang`, `gnupg-dirmngr`, `gnupg-gpgconf`, `gnupg-scdaemon`, `gnupg-scdaemon-udev`, `gnupg-keyboxd`, `gnupg-wks-client`, `gpg`, `gpg-agent`, `gpg-wks-server`, `gpgsm`, `gpgv`, `gnupg-utils` | GNU Privacy Guard suite |
 | [`orbien`](packages/orbien/) | `orbien`, `orbien-server`, `orbien-server-openrc` | Intranet tunneling client and server |
 | [`ports-box`](packages/ports-box/) | `ports-box`, `ports-box-openrc` | TCP/UDP port forwarder with per-user traffic quotas |

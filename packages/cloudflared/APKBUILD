@@ -1,0 +1,51 @@
+pkgname=cloudflared
+pkgver=2026.8.2
+pkgrel=0
+pkgdesc="Cloudflare Tunnel client"
+url="https://github.com/cloudflare/cloudflared"
+arch="x86_64 aarch64"
+license="Apache-2.0"
+makedepends="go gettext"
+subpackages="$pkgname-doc $pkgname-openrc"
+pkgusers="$pkgname"
+pkggroups="$pkgname"
+install="$pkgname.pre-install"
+source="$pkgname-$pkgver.tar.gz::https://github.com/cloudflare/cloudflared/archive/refs/tags/$pkgver.tar.gz
+	goflags.patch
+	config.yml
+	$pkgname.initd
+	"
+options="!check net" # upstream tests require privileged ICMP sockets
+
+prepare() {
+	default_prepare
+	go mod vendor
+}
+
+build() {
+	VERSION="$pkgver"
+	DATE=$(date -u '+%Y-%m-%d-%H%M UTC' -d @"$SOURCE_DATE_EPOCH")
+	export CGO_ENABLED=0 GOFLAGS="$GOFLAGS -mod=vendor -trimpath" VERSION DATE
+	make VERSION="$VERSION" DATE="$DATE" cloudflared
+	envsubst < cloudflared_man_template > cloudflared.1
+}
+
+check() {
+	go test -mod=vendor -buildmode=default ./...
+}
+
+package() {
+	install -D -m755 ./cloudflared "$pkgdir"/usr/bin/cloudflared
+	install -D -m644 ./cloudflared.1 "$pkgdir"/usr/share/man/man1/cloudflared.1
+
+	install -D -m755 "$srcdir"/$pkgname.initd "$pkgdir"/etc/init.d/$pkgname
+	install -D -m644 "$srcdir"/config.yml "$pkgdir"/etc/$pkgname/config.yml
+	install -d "$pkgdir"/var/lib/cloudflared
+}
+
+sha512sums="
+a4f7709a8a1faeea83f4e46f041e848d4505474f6466acdb90d95dd73384aeb1b81bf0367c85d6ad79f0c554d2a2afbffbc164a40c73c9e780da19d3e587fa18  cloudflared-2026.8.2.tar.gz
+0643b4f99ccbe59dc19a46c4cf22d6e8da33ceadb8f316f40552c99f412fd358fb261ea575b6b4f5438ab8f110e8ddc337c0b33245b0743d78e91fa588fbd34f  goflags.patch
+ba4038ee0c59e3c4293df8df718516e1695e7700b54e3a7ea15edbd1a7ab8c7a4665a5eeb68bc5287a3fbb398b672138d3b4b984c4970dec4b664eab6ea28e97  config.yml
+9ac541c70bba0bdaf136a7a7d8e1d6b8486488a66075ea7fcd7b6718aafe7decd27ad56a3eb8ddcb6e95975f09704de7e148572e3042a6c3a9138c214312a2fb  cloudflared.initd
+"

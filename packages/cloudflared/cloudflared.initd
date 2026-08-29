@@ -1,0 +1,25 @@
+#!/sbin/openrc-run
+
+name=cloudflared
+command=/usr/bin/cloudflared
+command_args="tunnel --config /etc/cloudflared/config.yml run"
+command_user=cloudflared:cloudflared
+command_background="yes"
+pidfile=/run/${RC_SVCNAME}.pid
+
+start_pre() {
+	config=/etc/cloudflared/config.yml
+	[ -f "$config" ] || {
+		eerror "cloudflared configuration $config not found"
+		return 1
+	}
+	grep -Eq '^[[:space:]]*(credentials-file|token-file):[[:space:]]*[^[:space:]#]+' "$config" || {
+		eerror "cloudflared configuration $config must define credentials-file or token-file"
+		return 1
+	}
+}
+
+depend() {
+	need net
+	after firewall
+}
