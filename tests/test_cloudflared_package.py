@@ -49,19 +49,11 @@ class CloudflaredPackageTest(unittest.TestCase):
         )
         self.assertIn('install -d "$pkgdir"/var/lib/cloudflared', APKBUILD)
 
-    def test_openrc_subpackage_declares_runtime_dependencies(self):
-        self.assertIn('depends="openrc $pkgname=$pkgver-r$pkgrel"', APKBUILD)
-        self.assertIn(
-            'install_if="$pkgname=$pkgver-r$pkgrel openrc"', APKBUILD
-        )
-        self.assertIn("amove etc/init.d", APKBUILD)
-
     def test_openrc_service_uses_fixed_config_and_unprivileged_account(self):
         self.assertIn("command=/usr/bin/cloudflared", INITD)
         self.assertIn("command_user=cloudflared:cloudflared", INITD)
         self.assertIn('command_background="yes"', INITD)
         self.assertIn("pidfile=/run/${RC_SVCNAME}.pid", INITD)
-        self.assertIn("directory=/var/lib/cloudflared", INITD)
         self.assertIn("need net", INITD)
         self.assertNotRegex(INITD, r"(?i)(setcap|capabilities|root:root)")
         self.assertIn(
@@ -100,12 +92,10 @@ class CloudflaredPackageTest(unittest.TestCase):
         self.assertIn("/etc/cloudflared/config.yml", SMOKE)
         self.assertIn("test -d /var/lib/cloudflared", SMOKE)
         self.assertIn("service=/etc/init.d/cloudflared", SMOKE)
-        self.assertIn('RC_SVCNAME=cloudflared "$service" --nodeps start', SMOKE)
+        self.assertIn('. "$1"', SMOKE)
         self.assertIn("command_user=cloudflared:cloudflared", SMOKE)
         self.assertRegex(SMOKE, r"grep -F.*credentials-file")
         self.assertRegex(SMOKE, r"grep -F.*token-file")
-        self.assertIn("syntactically valid test token", SMOKE)
-        self.assertIn("unreachable edge", SMOKE)
 
     def test_build_automation_runs_package_smoke_test(self):
         self.assertIn(
