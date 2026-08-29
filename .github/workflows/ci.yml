@@ -205,8 +205,6 @@ jobs:
       - name: Check required CI results
         env:
           EVENT: ${{ github.event_name }}
-          REF: ${{ github.ref_name }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           HAS_ORIGINS: ${{ needs.check.outputs.has_origins }}
           SNAPSHOT_CREATED: ${{ needs.sign.outputs.snapshot_created }}
           CHECK: ${{ needs.check.result }}
@@ -219,8 +217,7 @@ jobs:
           if [ "$HAS_ORIGINS" = true ]; then
             test "$BUILD" = success || status=1
           fi
-          if [ "$EVENT" = pull_request ] || [ "$REF" != "$DEFAULT_BRANCH" ] || \
-             [ "$HAS_ORIGINS" != true ]; then
+          if [ "$EVENT" = pull_request ] || [ "$HAS_ORIGINS" != true ]; then
             exit "$status"
           fi
           test "$SIGN" = success || status=1

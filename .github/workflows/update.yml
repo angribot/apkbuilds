@@ -5,7 +5,7 @@ on:
     - cron: '0 0 * * *'
 
 permissions:
-  contents: write
+  contents: read
 
 # Keep scheduled writers from pushing to main together.
 concurrency:
