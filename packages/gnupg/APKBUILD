@@ -2,8 +2,8 @@
 # Contributor: Jakub Jirutka <jakub@jirutka.cz>
 # Maintainer: Natanael Copa <ncopa@alpinelinux.org>
 pkgname=gnupg
-pkgver=2.5.21
-pkgrel=2
+pkgver=2.5.22
+pkgrel=0
 pkgdesc="GNU Privacy Guard 2 - meta package for full GnuPG suite"
 url="https://www.gnupg.org/"
 arch="all"
@@ -245,7 +245,7 @@ utils() {
 }
 
 sha512sums="
-dcc4e976e56411c0dd7309c0cb7e790b409709af55bb93883d257890abe72b17442d6c8fd682fef0e019d70e46a6a5cf860f1ae355a99024ed2aea230de8c0ea  gnupg-2.5.21.tar.bz2
+5ff5834e42009f5741d84dcf25473adb5704ca796e1bd8d1a8ea3216b854864f08504f5ff5279026bab24b5baa255e9bd18e70bc1d4fc8fe293351760ab71231  gnupg-2.5.22.tar.bz2
 d932e688ec81c1d98ba4a23bfbaea41cc91a49b43a6d31845af0a26c5170400f9f24599d4fa746d4e88673d940d52702947986c56c4458ae5b30173cafa40602  0001-include-unistd.patch
 18004e52925b1f03e67a29a3d43b39e8119cf3426cdad4136824b932ad906ac499b4ceb3d7573177a9f16410d3b80c8f0e4bcdc54dd284f3f803a2cef609ad01  0020-avoid-regenerating-defsincdate-use-shipped-file.patch
 d77a230e099ac26cf70acf4bf5c4a8446460f677857818027c16fd029292c249a24f31f7073e0388757cf567656e416b7f91af3bba62a85a2ffbdcf985c5050c  0110-avoid-simple-memory-dumps-via-ptrace.patch
