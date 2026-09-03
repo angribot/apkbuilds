@@ -1,6 +1,6 @@
 pkgname=tirith
 pkgver=0.4.1
-pkgrel=0
+pkgrel=1
 pkgdesc="Terminal security for developers and AI agents"
 url="https://github.com/sheeki03/tirith"
 arch="x86_64 aarch64"
