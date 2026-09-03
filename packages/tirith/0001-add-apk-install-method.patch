@@ -33,31 +33,30 @@
 +        assert!(!m.is_self_replaceable());
 --- a/crates/tirith/src/cli/selfupdate.rs
 +++ b/crates/tirith/src/cli/selfupdate.rs
-@@ -283,2 +283,2 @@
+@@ -537,2 +537,2 @@
 -/// Read lowercased `ID`/`ID_LIKE` tokens from `/etc/os-release` for apt-vs-dnf
 -/// disambiguation. Empty vec on non-Linux or absent/unreadable file (caller then
 +/// Read lowercased `ID`/`ID_LIKE` tokens from `/etc/os-release` for system package
 +/// manager detection. Empty vec on non-Linux or absent/unreadable file (caller then
-@@ -417 +417 @@
+@@ -671 +671 @@
 -/// `cargo install` and the AUR compile from source. Returns `None` for installs
 +/// `cargo install`, the AUR, and Alpine APKs compile from source. Returns `None` for installs
-@@ -434,0 +435,5 @@
+@@ -688,0 +689,5 @@
 +        InstallMethod::Apk => Some(
 +            "installed from an Alpine APK (compiled from source) — there is no canonical \
 +             release binary to byte-compare against"
 +                .to_string(),
 +        ),
-@@ -469,0 +475 @@
+@@ -723,0 +729 @@
 +        | InstallMethod::Apk
-@@ -488 +494 @@
+@@ -745 +751 @@
 -    //     binary by design (cargo/AUR compile from source). Byte-comparing them
 +    //     binary by design (cargo/AUR/APK compile from source). Byte-comparing them
-@@ -3255 +3261 @@
+@@ -3901 +3907,2 @@
 -    fn source_built_carveout_is_cargo_and_aur_only() {
 +    fn source_built_carveout_includes_apk() {
-@@ -3258,0 +3265 @@
 +        assert!(source_built_unverified_reason(&InstallMethod::Apk).is_some());
-@@ -3299,23 +3306,28 @@
+@@ -3945,23 +3952,25 @@
 -    fn verify_self_carves_out_cargo_before_any_network() {
 -        // A cargo (source-built) install must short-circuit to Unverified BEFORE
 -        // the release download, so this runs with no network and is a benign
@@ -71,7 +70,7 @@
 -            dev_build: false,
 -            path_resolution_failed: false,
 -        };
--        let outcome = run_verify_self(&prov);
+-        let outcome = run_verify_self(&prov, false);
 -        assert!(
 -            matches!(outcome.status, VerificationStatus::Unverified { .. }),
 -            "cargo install must be Unverified, got {:?}",
@@ -85,10 +84,7 @@
 +        // Source-built installs must short-circuit to Unverified BEFORE the release
 +        // download, so this runs with no network and is a benign "cannot verify"
 +        // (exit 0), not an operational error or a Failed.
-+        for method in [
-+            InstallMethod::Cargo,
-+            InstallMethod::Apk,
-+        ] {
++        for method in [InstallMethod::Cargo, InstallMethod::Apk] {
 +            let prov = Provenance {
 +                version: "0.3.2".to_string(),
 +                binary_path: Some(PathBuf::from("/usr/bin/tirith")),
@@ -98,7 +94,7 @@
 +                dev_build: false,
 +                path_resolution_failed: false,
 +            };
-+            let outcome = run_verify_self(&prov);
++            let outcome = run_verify_self(&prov, false);
 +            assert!(
 +                matches!(outcome.status, VerificationStatus::Unverified { .. }),
 +                "{method:?} must be Unverified, got {:?}",
@@ -109,10 +105,10 @@
 +                "source-built Unverified is benign and must not exit non-zero"
 +            );
 +        }
-@@ -3340,0 +3354 @@
+@@ -3983,0 +3993 @@
 +            InstallMethod::Apk,
 --- a/crates/tirith/src/main.rs
 +++ b/crates/tirith/src/main.rs
-@@ -1602 +1602 @@
+@@ -1605 +1605 @@
 -  * Package-manager installs (Homebrew, cargo, npm, Scoop, AUR, apt/dnf) are
 +  * Package-manager installs (Homebrew, cargo, npm, Scoop, AUR, apt/dnf/apk) are
