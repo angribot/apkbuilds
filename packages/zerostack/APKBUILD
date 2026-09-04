@@ -1,6 +1,6 @@
 pkgname=zerostack
-pkgver=1.7.2
-pkgrel=3
+pkgver=1.8.1
+pkgrel=0
 pkgdesc="Minimalistic coding agent written in Rust"
 url="https://github.com/gi-dellav/zerostack"
 arch="x86_64 aarch64"
@@ -39,5 +39,5 @@ package() {
 }
 
 sha512sums="
-2e6eb0ef5404d759224cd67b2abbe8d777175ce123b431daaf2fad57c01ef3b70fed691778a15c2e631785db76bb8bb53c00fab7200ab53e3bad642b3cf81eb2  zerostack-1.7.2.tar.gz
+7b7fca35bce2b586c8d7a6821c835c07cd383a3c20515b2a6061b39e8ed18d5151ca4ed6380df36cdf4687901e0cfedb41603d06a2b77ea0ce2b1c74d617dd3b  zerostack-1.8.1.tar.gz
 "
