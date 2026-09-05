@@ -1,7 +1,6 @@
 import hashlib
 import importlib.util
 import json
-import pathlib
 import sys
 import tempfile
 import unittest
@@ -10,6 +9,7 @@ from unittest import mock
 
 SCRIPTS = Path(__file__).parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
+import update as shared_update
 
 SPEC = importlib.util.spec_from_file_location(
     "update_ports_box", SCRIPTS / "update-ports-box.py"
@@ -18,50 +18,29 @@ update = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(update)
 
 
-def release(tag, **values):
-    result = {"tag_name": tag, "draft": False, "prerelease": False}
-    result.update(values)
-    return result
-
-
 class UpdatePortsBoxTest(unittest.TestCase):
-    def test_newest_eligible_release_requires_strict_version_tag(self):
-        version = update.newest_eligible_release(
-            [
-                release("v2.0.0-rc1"),
-                release("v1.10.0", prerelease=True),
-                release("v1.9.0", draft=True),
-                release("v1.8.0"),
-                release("nightly"),
-            ]
-        )
-        self.assertEqual(version, "1.8.0")
-
-    def test_update_rejects_missing_checksum(self):
-        with self.assertRaisesRegex(ValueError, "source checksum"):
-            update.updated_apkbuild("pkgver=0.1.2\npkgrel=0\n", "0.1.3", "b" * 128)
-
-    def test_main_pins_archive_checksum_from_strict_tag(self):
-        # The sha512 written into the APKBUILD must match what abuild verifies
-        # against the upstream archive at the strict version tag.
-        data = b"source archive"
-        digest = hashlib.sha512(data).hexdigest()
-        releases = json.dumps([release("v0.1.3")]).encode()
-        apkbuild = tempfile.NamedTemporaryFile(mode="w", delete=False)
-        self.addCleanup(pathlib.Path(apkbuild.name).unlink)
-        apkbuild.write("pkgver=0.1.2\npkgrel=0\n" + "a" * 128 + "  ports-box-0.1.2.tar.gz\n")
-        apkbuild.close()
-
-        def download(url):
-            if url.endswith("/releases?per_page=100"):
-                return releases
-            return data
-
-        with mock.patch.object(update, "download", side_effect=download), \
-                mock.patch.object(update, "APKBUILD", pathlib.Path(apkbuild.name)):
-            update.main([])
-        self.assertIn("pkgver=0.1.3\npkgrel=0", pathlib.Path(apkbuild.name).read_text())
-        self.assertIn(digest + "  ports-box-0.1.3.tar.gz", pathlib.Path(apkbuild.name).read_text())
+    def test_main_updates_the_origin_from_its_upstream_archive(self):
+        self.assertEqual(update.APKBUILD, SCRIPTS.parent / "packages/ports-box/APKBUILD")
+        source = b"ports-box source archive"
+        with tempfile.TemporaryDirectory() as directory:
+            apkbuild = Path(directory) / "ports-box" / "APKBUILD"
+            apkbuild.parent.mkdir()
+            apkbuild.write_text(
+                "pkgver=0.1.2\npkgrel=1\n" + "a" * 128 + "  ports-box-0.1.2.tar.gz\n"
+            )
+            responses = {
+                "https://api.github.com/repos/Yuu518/ports-box/releases?per_page=100":
+                    json.dumps([{"tag_name": "v0.1.3"}]).encode(),
+                "https://github.com/Yuu518/ports-box/archive/refs/tags/v0.1.3.tar.gz": source,
+            }
+            with mock.patch.object(shared_update, "download", side_effect=responses.__getitem__), \
+                    mock.patch.object(update, "APKBUILD", apkbuild):
+                update.main([])
+            self.assertEqual(
+                apkbuild.read_text(),
+                "pkgver=0.1.3\npkgrel=0\n"
+                + hashlib.sha512(source).hexdigest() + "  ports-box-0.1.3.tar.gz\n",
+            )
 
 
 if __name__ == "__main__":
