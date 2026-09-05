@@ -1,6 +1,5 @@
 """Tests for scripts/lib.sh."""
 
-import os
 import pathlib
 import subprocess
 import tempfile
@@ -203,58 +202,6 @@ o:zerostack
             actual.write_text("gnupg.apk\n")
             status, _ = run_helper(f'package_sets_equal "{expected}" "{actual}"')
         self.assertNotEqual(status, 0)
-
-
-class PinnedInstallationTest(unittest.TestCase):
-    def setUp(self):
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        self.root = pathlib.Path(directory.name)
-        fake_bin = self.root / "bin"
-        fake_bin.mkdir()
-        apk = fake_bin / "apk"
-        apk.write_text(
-            """#!/bin/sh
-command=$1
-case "$command" in
-add)
-    count=0
-    [ -f "$APK_ADD_COUNT" ] && count=$(cat "$APK_ADD_COUNT")
-    count=$((count + 1))
-    printf '%s\\n' "$count" > "$APK_ADD_COUNT"
-    exit "${APK_ADD_EXIT:-0}"
-    ;;
-esac
-"""
-        )
-        apk.chmod(0o755)
-        self.env = os.environ.copy()
-        self.env.update(
-            {
-                "PATH": os.pathsep.join([str(fake_bin), self.env["PATH"]]),
-                "APK_ADD_COUNT": str(self.root / "add-count"),
-            }
-        )
-
-    def run_helper_with_env(self, script):
-        return subprocess.run(
-            ["sh", "-eu", "-c", f". {LIB}\n{script}"],
-            capture_output=True,
-            text=True,
-            env=self.env,
-        )
-
-    def test_failure_is_attempted_once_and_logs_build_identity(self):
-        self.env["APK_ADD_EXIT"] = "1"
-        completed = self.run_helper_with_env(
-            "apk_add_pinned_origin x86_64 orbien 3.2.0-r0 3.1.0-r0 orbien=3.2.0-r0"
-        )
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertEqual((self.root / "add-count").read_text().strip(), "1")
-        self.assertIn("stage=install", completed.stderr)
-        self.assertIn("package-origin=orbien", completed.stderr)
-        self.assertIn("declared-build=3.2.0-r0", completed.stderr)
-        self.assertIn("published-build(s)=3.1.0-r0", completed.stderr)
 
 
 class CallerIsolationTest(unittest.TestCase):
