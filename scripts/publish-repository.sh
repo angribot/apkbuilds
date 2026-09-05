@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # Consume a verified staging snapshot and replace gh-pages with one orphan commit.
 # PAGES_DEPLOY_KEY supplies publication authority; RUNNER_TEMP holds its temporary file.
 set -eu
@@ -29,8 +29,11 @@ key=$(mktemp "${RUNNER_TEMP:?}/pages-deploy-key.XXXXXX")
   exit 2
 }
 printf '%s\n' "$PAGES_DEPLOY_KEY" > "$key"
-printf -v GIT_SSH_COMMAND 'ssh -i %q -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' "$key"
-export GIT_SSH_COMMAND
+# Let Git's shell expand the quoted path, without shell-specific escaping.
+PAGES_DEPLOY_KEY_FILE=$key
+export PAGES_DEPLOY_KEY_FILE
+# shellcheck disable=SC2016 # Expanded by Git's shell, not this one.
+export GIT_SSH_COMMAND='ssh -i "$PAGES_DEPLOY_KEY_FILE" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new'
 unset PAGES_DEPLOY_KEY
 
 stage=snapshot
