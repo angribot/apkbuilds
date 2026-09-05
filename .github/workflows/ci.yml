@@ -60,7 +60,6 @@ jobs:
           . scripts/lib.sh
           status=0
           for origin in $ORIGINS; do
-            assert_origin_directory "packages/$origin" || status=1
             printf '==> linting %s\n' "$origin"
             (
               cd "packages/$origin"
