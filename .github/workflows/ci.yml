@@ -237,6 +237,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: source
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: signed-repository
@@ -245,20 +250,6 @@ jobs:
         env:
           PAGES_DEPLOY_KEY: ${{ secrets.PAGES_DEPLOY_KEY }}
         run: |
-          cd pages
-          # The artifact comes from a clone, so drop any Git metadata
-          # that survived upload before building the orphan commit.
-          rm -rf .git
-          git init -q --initial-branch=gh-pages
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          printf '%s\n' "$PAGES_DEPLOY_KEY" > "$RUNNER_TEMP/pages-deploy-key"
-          chmod 600 "$RUNNER_TEMP/pages-deploy-key"
-          trap 'rm -f "$RUNNER_TEMP/pages-deploy-key"' EXIT
-          export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/pages-deploy-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-          git remote add origin "git@github.com:$GITHUB_REPOSITORY.git"
-          git add -A
-          # A single orphan commit keeps the branch from accumulating the
-          # history of every .apk ever published.
-          git commit -q -m "Publish $GITHUB_SHA"
-          git push -q --force origin gh-pages
+          source/scripts/publish-repository.sh \
+            "$GITHUB_WORKSPACE/pages" "$GITHUB_SHA" \
+            "git@github.com:$GITHUB_REPOSITORY.git"
