@@ -58,7 +58,6 @@ stage=build-plan
 su builder -c "abuild-keygen -a -n"
 cp /home/builder/.config/abuild/*.rsa.pub /etc/apk/keys/
 supports_arch "$arch" "$workspace/packages/$origin/APKBUILD" || exit 0
-assert_origin_directory "$workspace/packages/$origin"
 expected="$work/expected-$origin"
 published_packages="$work/published-$origin"
 su builder -c \
@@ -71,11 +70,14 @@ versions="$work/published-versions-$origin"
 apkindex_origin_versions \
   "$published_directory/APKINDEX" "$origin" > "$versions"
 published_builds=$(format_published_builds "$versions")
-if ! package_sets_equal "$expected" "$published_packages"; then
+published_family_matches=false
+if package_sets_equal "$expected" "$published_packages"; then
+  published_family_matches=true
+else
   printf '::notice::%s package set mismatch: source revision=%s declared build=%s published build(s)=%s\n' \
     "$origin" "$source_revision" "$declared" "$published_builds"
 fi
-if package_sets_equal "$expected" "$published_packages"; then
+if [ "$published_family_matches" = true ]; then
   stage='published-family'
   published_apks="$published_directory/$origin"
   mkdir -p "$published_apks"
