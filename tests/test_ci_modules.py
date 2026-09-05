@@ -168,21 +168,6 @@ class CiModuleTest(unittest.TestCase):
                 "[--install-declared-builds]"
             ),
         }
-        obsolete_inputs = (
-            "--workspace",
-            "--output",
-            "--repository-key",
-            "--distfiles",
-            "--cargo-home",
-            "--ccache-dir",
-            "--sccache-dir",
-            "--pages",
-            "--private-key-file",
-            "--key-directory",
-            "--repositories-file",
-            "--force-build",
-        )
-
         for name, path in MODULES.items():
             with self.subTest(module=name):
                 completed = subprocess.run(
@@ -190,8 +175,6 @@ class CiModuleTest(unittest.TestCase):
                 )
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 self.assertEqual(completed.stdout.strip(), expected_usage[name])
-                for obsolete_input in obsolete_inputs:
-                    self.assertNotIn(obsolete_input, completed.stdout)
 
     def test_all_operation_scripts_are_valid_posix_shell(self):
         paths = [*MODULES.values(), *(SCRIPTS / "operations").glob("*.sh")]
@@ -395,6 +378,51 @@ class CiModuleTest(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertEqual((root / "update-count").read_text().strip(), "1")
             self.assertEqual((root / "added").read_text().strip(), "alpha=1-r0")
+
+    def test_verify_module_install_failure_is_not_retried_and_logs_build_identities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            workspace = self.workspace(root)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            install_fake_docker(fake_bin)
+            write_executable(
+                fake_bin / "apk",
+                r'''
+                if [ "$1" = add ]; then
+                  printf '%s\n' "$*" >> "$APK_ADD_RESULT"
+                  exit 1
+                fi
+                exit 0
+                ''',
+            )
+            env, _, _ = self.environment(root, workspace, fake_bin)
+            self.write_repository_arch(root, "x86_64", "0.9-r0", b"not-an-apk")
+            env.update(
+                {
+                    "FAKE_DOCKER_PASSTHROUGH": "1",
+                    "APK_ADD_RESULT": str(root / "added"),
+                }
+            )
+            completed = subprocess.run(
+                [
+                    "sh",
+                    str(MODULES["verify"]),
+                    "--arch",
+                    "x86_64",
+                    "--install-declared-builds",
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertEqual((root / "added").read_text().splitlines(), ["add alpha=1-r0"])
+            self.assertIn(
+                "stage=install arch=x86_64 package-origin=alpha "
+                "declared-build=1-r0 published-build(s)=0.9-r0",
+                completed.stderr,
+            )
 
     def test_verify_module_does_not_retry_index_failure(self):
         with tempfile.TemporaryDirectory() as directory:

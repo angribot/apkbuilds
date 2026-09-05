@@ -142,22 +142,6 @@ package_sets_equal() {
   ' "$1" "$2"
 }
 
-# Install one exact package-origin build and log the identity on failure.
-#   apk_add_pinned_origin <arch> <origin> <declared-build> <published-builds> <spec>
-apk_add_pinned_origin() {
-  _apo_arch=$1
-  _apo_origin=$2
-  _apo_declared=$3
-  _apo_published=$4
-  _apo_spec=$5
-  if apk add "$_apo_spec"; then
-    return 0
-  fi
-  printf '::error::verify stage=install arch=%s package-origin=%s declared-build=%s published-build(s)=%s\n' \
-    "$_apo_arch" "$_apo_origin" "$_apo_declared" "$_apo_published" >&2
-  return 1
-}
-
 # Format the versions found for an origin into one log-safe field.
 #   format_published_builds <versions-file>
 format_published_builds() {

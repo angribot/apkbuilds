@@ -80,8 +80,11 @@ verify_arch() {
     apkindex_origin_versions "$index" "$origin" > "$versions"
     published_builds=$(format_published_builds "$versions")
     spec=$(apkbuild_pinned_spec "$workspace/packages/$origin")
-    apk_add_pinned_origin \
-      "$arch" "$origin" "$declared" "$published_builds" "$spec"
+    if ! apk add "$spec"; then
+      printf '::error::verify stage=install arch=%s package-origin=%s declared-build=%s published-build(s)=%s\n' \
+        "$arch" "$origin" "$declared" "$published_builds" >&2
+      exit 1
+    fi
   done
   rm -rf "$work"
   work=
