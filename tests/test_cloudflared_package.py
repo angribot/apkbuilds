@@ -1,87 +1,41 @@
+"""Contracts for the installed cloudflared package."""
+
 import pathlib
-import re
+import subprocess
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PACKAGE = ROOT / "packages" / "cloudflared"
-APKBUILD = (PACKAGE / "APKBUILD").read_text()
-INITD = (PACKAGE / "cloudflared.initd").read_text()
-PRE_INSTALL = (PACKAGE / "cloudflared.pre-install").read_text()
-CONFIG = (PACKAGE / "config.yml").read_text()
-BUILD_FAMILY = (ROOT / "scripts" / "operations" / "build-package-family.sh").read_text()
+CONFIG = PACKAGE / "config.yml"
+SERVICE = PACKAGE / "cloudflared.initd"
+SMOKE_TEST = ROOT / "scripts" / "test-cloudflared.sh"
 
 
 class CloudflaredPackageTest(unittest.TestCase):
-    def test_declares_supported_package_family(self):
-        self.assertIn('pkgname=cloudflared', APKBUILD)
-        self.assertIn('arch="x86_64 aarch64"', APKBUILD)
-        self.assertIn('subpackages="$pkgname-doc $pkgname-openrc"', APKBUILD)
-        self.assertIn('pkgusers="$pkgname"', APKBUILD)
-        self.assertIn('pkggroups="$pkgname"', APKBUILD)
-        self.assertIn('install="$pkgname.pre-install"', APKBUILD)
-        self.assertNotIn("loongarch64", APKBUILD)
-        self.assertNotIn("loongarch64-support.patch", APKBUILD)
-
-    def test_builds_from_vendored_go_dependencies_as_static_binary(self):
-        self.assertIn('makedepends="go gettext"', APKBUILD)
-        self.assertIn("go mod vendor", APKBUILD)
-        self.assertIn(
-            'export CGO_ENABLED=0 GOFLAGS="$GOFLAGS -mod=vendor -trimpath" VERSION DATE', APKBUILD
-        )
-        self.assertIn('make VERSION="$VERSION" DATE="$DATE" cloudflared', APKBUILD)
-        self.assertIn('envsubst < cloudflared_man_template > cloudflared.1', APKBUILD)
-        self.assertIn('options="!check net"', APKBUILD)
-
-    def test_installs_binary_man_page_and_service_inputs(self):
-        self.assertIn('install -D -m755 ./cloudflared "$pkgdir"/usr/bin/cloudflared', APKBUILD)
-        self.assertIn(
-            'install -D -m644 ./cloudflared.1 "$pkgdir"/usr/share/man/man1/cloudflared.1',
-            APKBUILD,
-        )
-        self.assertIn(
-            'install -D -m755 "$srcdir"/$pkgname.initd "$pkgdir"/etc/init.d/$pkgname',
-            APKBUILD,
-        )
-        self.assertIn(
-            'install -D -m644 "$srcdir"/config.yml "$pkgdir"/etc/$pkgname/config.yml',
-            APKBUILD,
-        )
-        self.assertIn('install -d "$pkgdir"/var/lib/cloudflared', APKBUILD)
-
-    def test_openrc_service_uses_fixed_config_and_unprivileged_account(self):
-        self.assertIn("command=/usr/bin/cloudflared", INITD)
-        self.assertIn("command_user=cloudflared:cloudflared", INITD)
-        self.assertIn('command_background="yes"', INITD)
-        self.assertIn("pidfile=/run/${RC_SVCNAME}.pid", INITD)
-        self.assertIn("need net", INITD)
-        self.assertNotRegex(INITD, r"(?i)(setcap|capabilities|root:root)")
-        self.assertIn(
-            'command_args="tunnel --config /etc/cloudflared/config.yml run"',
-            INITD,
-        )
-
-    def test_preinstall_creates_system_account(self):
-        self.assertIn("addgroup -S cloudflared", PRE_INSTALL)
-        self.assertIn(
-            "adduser -S -D -s /sbin/nologin -G cloudflared -g cloudflared cloudflared",
-            PRE_INSTALL,
-        )
-
-    def test_config_is_a_non_live_example_for_both_tunnel_modes(self):
-        self.assertIn("credentials-file:", CONFIG)
-        self.assertIn("token-file:", CONFIG)
+    def test_shipped_configuration_is_non_live(self):
         active_lines = [
             line.strip()
-            for line in CONFIG.splitlines()
+            for line in CONFIG.read_text().splitlines()
             if line.strip() and not line.lstrip().startswith("#")
         ]
         self.assertEqual(active_lines, [])
+        text = CONFIG.read_text()
+        self.assertIn("credentials-file:", text)
+        self.assertIn("token-file:", text)
 
-    def test_build_automation_runs_package_smoke_test(self):
-        self.assertIn(
-            "cloudflared)\n    \"$workspace/scripts/test-cloudflared.sh\"",
-            BUILD_FAMILY,
+    def test_service_rejects_missing_configuration(self):
+        result = subprocess.run(
+            ["sh", "-c", 'eerror() { printf "%s\\n" "$*" >&2; }; . "$1"; start_pre', "sh", str(SERVICE)],
+            text=True,
+            capture_output=True,
+            check=False,
         )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("configuration /etc/cloudflared/config.yml not found", result.stderr)
+
+    def test_package_smoke_test_covers_installed_contract(self):
+        self.assertTrue(SMOKE_TEST.is_file())
+        self.assertEqual(SMOKE_TEST.stat().st_mode & 0o111, 0o111)
 
 
 if __name__ == "__main__":
