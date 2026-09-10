@@ -54,7 +54,8 @@ The packaging revision of a package version.
 _Avoid_: Package release
 
 **Build identity**:
-The exact combination of package name, package version, and package revision.
+The exact combination of package origin name, package version, and package
+revision.
 
 **Declared build**:
 The build identity currently declared by a package origin.
