@@ -20,7 +20,7 @@ def run_helper(script, cwd=None):
     return completed.returncode, completed.stdout
 
 
-class ApkbuildFieldTest(unittest.TestCase):
+class ApkbuildFixture:
     def write_apkbuild(self, body):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -28,6 +28,8 @@ class ApkbuildFieldTest(unittest.TestCase):
         (origin / "APKBUILD").write_text(body)
         return origin
 
+
+class ApkbuildFieldTest(ApkbuildFixture, unittest.TestCase):
     def test_strips_surrounding_quotes(self):
         origin = self.write_apkbuild('pkgname="demo"\npkgver="2.5.21"\npkgrel=\'3\'\n')
         status, out = run_helper(f'apkbuild_pinned_spec "{origin}"')
@@ -74,6 +76,35 @@ class ApkbuildFieldTest(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertFalse(marker.exists(), "APKBUILD contents were executed")
         self.assertIn("touch", out)
+
+
+class SupportsArchTest(ApkbuildFixture, unittest.TestCase):
+    def supports(self, arch, declared=None):
+        body = "" if declared is None else f'arch="{declared}"\n'
+        origin = self.write_apkbuild(body)
+        status, _ = run_helper(f'supports_arch {arch} "{origin}/APKBUILD"')
+        return status
+
+    def test_absent_arch_is_unrestricted(self):
+        self.assertEqual(self.supports("x86_64"), 0)
+
+    def test_exclusion_wins_over_all(self):
+        self.assertNotEqual(self.supports("x86_64", "all !x86_64"), 0)
+        self.assertEqual(self.supports("aarch64", "all !x86_64"), 0)
+
+    def test_exclusion_wins_over_noarch(self):
+        self.assertNotEqual(self.supports("aarch64", "noarch !aarch64"), 0)
+        self.assertEqual(self.supports("x86_64", "noarch !aarch64"), 0)
+
+    def test_exclusion_wins_over_an_explicit_match(self):
+        self.assertNotEqual(self.supports("x86_64", "x86_64 !x86_64"), 0)
+
+    def test_exclusion_matches_whole_tokens_only(self):
+        self.assertEqual(self.supports("x86_64", "all !x86_64-extra"), 0)
+
+    def test_negation_only_list_supports_nothing(self):
+        self.assertNotEqual(self.supports("x86_64", "!x86_64"), 0)
+        self.assertNotEqual(self.supports("aarch64", "!x86_64"), 0)
 
 
 class ChangedOriginsTest(unittest.TestCase):
