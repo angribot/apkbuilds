@@ -3,6 +3,6 @@ diff --git a/Makefile b/Makefile
 +++ b/Makefile
 @@ -148,3 +148,3 @@
  endif
--	GOOS=$(TARGET_OS) GOARCH=$(TARGET_ARCH) $(ARM_COMMAND) go build -mod=vendor $(GO_BUILD_TAGS) $(LDFLAGS) $(IMPORT_PATH)/cmd/cloudflared
+-	GOOS=$(TARGET_OS) GOARCH=$(TARGET_ARCH) $(ARM_COMMAND) go build -mod=readonly $(GO_BUILD_TAGS) $(LDFLAGS) $(IMPORT_PATH)/cmd/cloudflared
 +	GOOS=linux $(ARM_COMMAND) go build $(GOFLAGS) $(GO_BUILD_TAGS) $(LDFLAGS) $(IMPORT_PATH)/cmd/cloudflared
  ifeq ($(FIPS), true)
