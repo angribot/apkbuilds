@@ -30,8 +30,9 @@ def _field(text, name):
 def apkbuild_declarations(text):
     """Return the installable package names an APKBUILD text declares.
 
-    Mirrors the no-execution parsing convention of `apkbuild_field` in
-    scripts/lib.sh, extended to multi-line values and `$pkgname` expansion.
+    Like `apkbuild_field` in scripts/lib.sh, reads declarations without
+    executing the APKBUILD; unlike it, handles multi-line values and
+    `$pkgname` expansion.
     """
     pkgname = _field(text, "pkgname")
     names = {pkgname}
@@ -129,13 +130,13 @@ class ApkbuildDeclarationsTest(unittest.TestCase):
     def test_does_not_execute_apkbuild(self):
         with tempfile.TemporaryDirectory() as directory:
             marker = pathlib.Path(directory) / "executed"
-            text = f'pkgname=alpha\npkgver="$(touch {marker})"\n'
+            text = f'pkgname=alpha\nsubpackages="$pkgname-doc $(touch {marker})"\n'
 
             declarations = apkbuild_declarations(text)
             marker_exists = marker.exists()
 
-        self.assertEqual({"alpha"}, declarations)
-        self.assertFalse(marker_exists)
+        self.assertFalse(marker_exists, "APKBUILD contents were executed")
+        self.assertIn("alpha", declarations)
 
 
 class ReadmeTableTest(unittest.TestCase):
