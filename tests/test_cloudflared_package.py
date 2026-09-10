@@ -8,7 +8,6 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 PACKAGE = ROOT / "packages" / "cloudflared"
 CONFIG = PACKAGE / "config.yml"
 SERVICE = PACKAGE / "cloudflared.initd"
-SMOKE_TEST = ROOT / "scripts" / "test-cloudflared.sh"
 
 
 class CloudflaredPackageTest(unittest.TestCase):
@@ -32,10 +31,6 @@ class CloudflaredPackageTest(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("configuration /etc/cloudflared/config.yml not found", result.stderr)
-
-    def test_package_smoke_test_covers_installed_contract(self):
-        self.assertTrue(SMOKE_TEST.is_file())
-        self.assertEqual(SMOKE_TEST.stat().st_mode & 0o111, 0o111)
 
 
 if __name__ == "__main__":

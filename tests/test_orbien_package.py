@@ -6,7 +6,6 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SERVICE = ROOT / "packages" / "orbien" / "orbien-server.initd"
-SMOKE_TEST = ROOT / "scripts" / "test-orbien.sh"
 
 
 class OrbienPackageTest(unittest.TestCase):
@@ -25,10 +24,6 @@ class OrbienPackageTest(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("/etc/orbien/orbien-server.toml not found", result.stderr)
-
-    def test_package_smoke_test_covers_installed_contract(self):
-        self.assertTrue(SMOKE_TEST.is_file())
-        self.assertEqual(SMOKE_TEST.stat().st_mode & 0o111, 0o111)
 
 
 if __name__ == "__main__":

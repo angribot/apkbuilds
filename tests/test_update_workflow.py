@@ -4,11 +4,14 @@ import pathlib
 import re
 import shutil
 import subprocess
+import sys
 import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 from tests.update_manifest import read_manifest
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "update.yml"
 WORKFLOW = WORKFLOW_PATH.read_text()
 CI_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "ci.yml"

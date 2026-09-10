@@ -6,12 +6,15 @@ import shlex
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
 from tests.update_manifest import read_manifest
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "update-packages.sh"
 
 PACKAGE_ORIGINS = read_manifest()
