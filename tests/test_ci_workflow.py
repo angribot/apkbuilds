@@ -1,7 +1,10 @@
 """Contract tests for the CI publication job graph."""
 
+import os
 import pathlib
 import re
+import subprocess
+import textwrap
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -86,10 +89,48 @@ class PublicationJobGraphTest(unittest.TestCase):
         )
         self.assertIn("name: signed-repository", job_lines(verify))
 
+    def test_integration_uses_both_native_architectures_without_release_secrets(self):
+        integration = self.jobs["integration"]
+        self.assertEqual({"check"}, job_needs(integration))
+        self.assertEqual(
+            "needs.check.outputs.run_integration == 'true'", job_value(integration, "if")
+        )
+        for line in (
+            "- arch: x86_64", "runner: ubuntu-24.04",
+            "- arch: aarch64", "runner: ubuntu-24.04-arm",
+            "python3 tests/integration/run.py", "persist-credentials: false",
+        ):
+            self.assertIn(line, job_lines(integration))
+        self.assertNotIn("secrets.", integration)
+        self.assertIsNone(job_value(integration, "environment"))
+
     def test_ci_waits_for_every_dynamic_job(self):
         self.assertEqual(
-            {"check", "build", "sign", "verify"}, job_needs(self.jobs["ci"])
+            {"check", "integration", "build", "sign", "verify"}, job_needs(self.jobs["ci"])
         )
+
+    def test_required_ci_gate_enforces_selected_integration_results(self):
+        script = textwrap.dedent(self.jobs["ci"].split("        run: |\n", 1)[1])
+        for event in ("pull_request", "push"):
+            for selected, result, expected in (
+                ("false", "skipped", 0),
+                ("true", "success", 0),
+                ("true", "failure", 1),
+                ("true", "cancelled", 1),
+                ("true", "skipped", 1),
+            ):
+                with self.subTest(event=event, selected=selected, result=result):
+                    completed = subprocess.run(
+                        ["sh", "-c", script], capture_output=True, text=True,
+                        env={
+                            **os.environ, "EVENT": event, "CHECK": "success",
+                            "HAS_ORIGINS": "false", "BUILD": "skipped",
+                            "SIGN": "skipped", "VERIFY": "skipped",
+                            "SNAPSHOT_CREATED": "false", "RUN_INTEGRATION": selected,
+                            "INTEGRATION": result,
+                        },
+                    )
+                    self.assertEqual(completed.returncode, expected, completed.stderr)
 
     def test_publish_requires_the_default_branch_and_every_prior_success(self):
         publish = self.jobs["publish"]

@@ -1,0 +1,36 @@
+# Synthetic package origin used only by the real-container integration test.
+pkgname=apkbuilds-ci-probe
+pkgver=2.0.0
+pkgrel=0
+pkgdesc="Compiled repository integration fixture"
+url="https://example.invalid/apkbuilds-ci-probe"
+arch="x86_64 aarch64"
+license="MIT"
+depends="$pkgname-data=$pkgver-r$pkgrel"
+subpackages="$pkgname-data::noarch"
+source="probe.c message.txt"
+builddir="$srcdir"
+
+build() {
+	${CC:-cc} -Wall -Wextra -Werror -o probe probe.c
+}
+
+check() {
+	test "$(./probe message.txt)" = "apkbuilds-ci-probe: split payload"
+}
+
+package() {
+	install -Dm755 probe "$pkgdir/usr/bin/apkbuilds-ci-probe"
+	install -Dm644 message.txt "$pkgdir/usr/share/apkbuilds-ci-probe/message.txt"
+}
+
+data() {
+	pkgdesc="Data for the repository integration fixture"
+	depends=""
+	amove usr/share/apkbuilds-ci-probe
+}
+
+sha512sums="
+a8390f5628c58aa91e3bfd1a6976935c9e910d9c468719a8572697f5e300ef8b233af5e3fb3eaa6ce88ed0076ba6e04b3e9a847dfa4f7234f91c8dc7bafd4778  probe.c
+0d061a99e2e10f8e003fbd27f3ffbc7ad465af31cd8293024f656b4f04259cc5894bc8de2f9ade63f81adc10583300ecd4b0349e4748ea16a149e0af7b505f3f  message.txt
+"
