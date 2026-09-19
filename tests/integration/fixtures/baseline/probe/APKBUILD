@@ -1,0 +1,21 @@
+# An architecture-independent old family, including a retired split package.
+pkgname=apkbuilds-ci-probe
+pkgver=1.0.0
+pkgrel=0
+pkgdesc="Old repository integration fixture"
+url="https://example.invalid/apkbuilds-ci-probe"
+arch="noarch"
+license="MIT"
+subpackages="$pkgname-retired"
+options="!check" # The baseline contains data only.
+
+package() {
+	mkdir -p "$pkgdir/usr/share/apkbuilds-ci-probe"
+	printf '%s\n' old > "$pkgdir/usr/share/apkbuilds-ci-probe/old"
+	printf '%s\n' retired > "$pkgdir/usr/share/apkbuilds-ci-probe/retired"
+}
+
+retired() {
+	pkgdesc="Retired integration split package"
+	amove usr/share/apkbuilds-ci-probe/retired
+}

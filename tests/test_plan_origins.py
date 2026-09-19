@@ -149,7 +149,7 @@ class PlanOriginsTest(unittest.TestCase):
             {("alpha", "x86_64"), ("alpha", "aarch64")},
         )
 
-    def test_automation_only_pull_request_is_a_visible_no_op(self):
+    def test_automation_pr_selects_integration_without_production_builds(self):
         completed = self.run_plan(
             event="pull_request",
             revision=self.ci_fix_commit,
@@ -158,8 +158,67 @@ class PlanOriginsTest(unittest.TestCase):
 
         outputs = self.plan_outputs(completed)
         self.assertEqual(outputs["has_origins"], "false")
+        self.assertEqual(outputs["run_integration"], "true")
         self.assertEqual(outputs["origins"], "")
         self.assertEqual(json.loads(outputs["matrix"]), {"include": []})
+
+    def test_integration_selection_covers_shared_operations_and_its_own_inputs(self):
+        paths = (
+            "scripts/lib.sh", "scripts/prepare-builder.sh",
+            "scripts/plan-origins.sh", "scripts/check-declared-build.sh",
+            "scripts/build-package-family.sh", "scripts/sign-repository.sh",
+            "scripts/verify-repository.sh", "scripts/publish-repository.sh",
+            "scripts/operations/new-operation.sh",
+            "tests/integration/run.py",
+            "tests/integration/fixtures/probe/probe.c",
+        )
+        for path in paths:
+            for event in ("pull_request", "push"):
+                with self.subTest(path=path, event=event):
+                    self.git("switch", "-q", "main")
+                    before = self.revision()
+                    target = self.root / path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with target.open("a") as output:
+                        output.write("\n# changed integration input\n")
+                    self.commit("change integration input", path)
+                    completed = self.run_plan(
+                        event=event, revision=self.revision(), base=before, before=before
+                    )
+                    outputs = self.plan_outputs(completed)
+                    self.assertEqual(outputs["run_integration"], "true")
+                    expected_origins = "false" if event == "pull_request" else "true"
+                    self.assertEqual(outputs["has_origins"], expected_origins)
+
+    def test_unrelated_changes_do_not_select_integration(self):
+        paths = (
+            "README.md", "docs/example.md", "scripts/update.py",
+            "scripts/update-packages.sh", ".github/workflows/update.yml",
+            "tests/test_update_lib.py", "tests/integration/README.md",
+            "packages/updaters", "packages/alpha/APKBUILD",
+        )
+        for path in paths:
+            for event in ("pull_request", "push"):
+                with self.subTest(path=path, event=event):
+                    self.git("switch", "-q", "main")
+                    before = self.revision()
+                    target = self.root / path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with target.open("a") as output:
+                        output.write("\n# unrelated change\n")
+                    self.commit("unrelated change", path)
+                    completed = self.run_plan(
+                        event=event, revision=self.revision(), base=before, before=before
+                    )
+                    self.assertEqual(self.plan_outputs(completed)["run_integration"], "false")
+
+    def test_deleting_an_integration_input_still_selects_integration(self):
+        self.git("switch", "-q", "main")
+        before = self.revision()
+        self.git("rm", ".github/workflows/ci.yml")
+        self.git("commit", "-q", "-m", "remove CI input")
+        completed = self.run_plan(event="pull_request", revision=self.revision(), base=before)
+        self.assertEqual(self.plan_outputs(completed)["run_integration"], "true")
 
     def test_auxiliary_package_input_selects_its_origin(self):
         completed = self.run_plan(

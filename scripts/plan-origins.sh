@@ -1,5 +1,5 @@
 #!/bin/sh
-# Select package origins for pull-request validation or main reconciliation.
+# Select package origins and integration checks for pull requests or main pushes.
 # shellcheck disable=SC1091
 
 set -eu
@@ -20,8 +20,7 @@ case "$EVENT" in
     ;;
 esac
 
-git diff --no-renames --name-only "$range_base" "$REVISION" -- packages/ \
-  > "$changed"
+git diff --no-renames --name-only "$range_base" "$REVISION" > "$changed"
 git diff --no-renames --diff-filter=D --name-only \
   "$range_base" "$REVISION" -- packages/ > "$removed"
 
@@ -74,6 +73,21 @@ for origin in $origins; do
     exit 1
   fi
 done
+
+run_integration=false
+while IFS= read -r path; do
+  case "$path" in
+    tests/integration/*.md) ;;
+    .github/workflows/ci.yml|scripts/lib.sh|scripts/prepare-builder.sh|\
+    scripts/plan-origins.sh|scripts/check-declared-build.sh|\
+    scripts/build-package-family.sh|scripts/sign-repository.sh|\
+    scripts/verify-repository.sh|scripts/publish-repository.sh|\
+    scripts/operations/*|tests/integration/*)
+      run_integration=true
+      ;;
+  esac
+done < "$changed"
+printf 'run_integration=%s\n' "$run_integration" >> "$GITHUB_OUTPUT"
 
 selected_origins=
 for origin in $origins; do

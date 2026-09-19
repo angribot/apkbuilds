@@ -44,3 +44,10 @@ Alpine releases are not supported.
 | [`realm`](packages/realm/) | `realm`, `realm-openrc` | High-performance relay server |
 | [`tirith`](packages/tirith/) | `tirith` | Terminal security for developers and AI agents |
 | [`zerostack`](packages/zerostack/) | `zerostack` | Minimalistic coding agent |
+
+## Development checks
+
+Run the unit tests with `python3 -m unittest discover -s tests`. Shared CI
+operation changes also run the [repository lifecycle integration test](tests/integration/README.md)
+on native x86_64 and aarch64 runners, using temporary signing keys and a local
+Git remote.

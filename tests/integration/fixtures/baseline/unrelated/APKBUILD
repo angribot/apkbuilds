@@ -1,0 +1,13 @@
+pkgname=apkbuilds-ci-unrelated
+pkgver=1.0.0
+pkgrel=0
+pkgdesc="Unrelated repository integration fixture"
+url="https://example.invalid/apkbuilds-ci-unrelated"
+arch="noarch"
+license="MIT"
+options="!check" # The baseline contains data only.
+
+package() {
+	mkdir -p "$pkgdir/usr/share/apkbuilds-ci-unrelated"
+	printf '%s\n' untouched > "$pkgdir/usr/share/apkbuilds-ci-unrelated/marker"
+}

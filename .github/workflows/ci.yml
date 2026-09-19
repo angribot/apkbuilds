@@ -22,6 +22,7 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       has_origins: ${{ steps.set-matrix.outputs.has_origins }}
+      run_integration: ${{ steps.set-matrix.outputs.run_integration }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     container: alpine:edge
@@ -38,7 +39,7 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Lint workflows
         run: actionlint
-      - name: Plan package origins
+      - name: Plan package origins and integration checks
         id: set-matrix
         env:
           EVENT: ${{ github.event_name }}
@@ -84,6 +85,38 @@ jobs:
         # Publication skips a complete declared package family, so an edit
         # that forgets to bump pkgrel would never reach users.
         run: sh scripts/check-declared-build.sh
+  integration:
+    needs: check
+    if: needs.check.outputs.run_integration == 'true'
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Exercise the repository lifecycle with temporary keys
+        run: >-
+          python3 tests/integration/run.py
+          --arch "${{ matrix.arch }}"
+          --logs "$RUNNER_TEMP/integration-logs"
+      - name: Preserve integration diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: integration-logs-${{ matrix.arch }}
+          path: ${{ runner.temp }}/integration-logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
   build:
     needs: check
     if: needs.check.outputs.has_origins == 'true'
@@ -199,7 +232,7 @@ jobs:
   # dynamic jobs without pretending that a pull request publishes anything.
   ci:
     if: always()
-    needs: [check, build, sign, verify]
+    needs: [check, integration, build, sign, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -207,6 +240,8 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           HAS_ORIGINS: ${{ needs.check.outputs.has_origins }}
+          RUN_INTEGRATION: ${{ needs.check.outputs.run_integration }}
+          INTEGRATION: ${{ needs.integration.result }}
           SNAPSHOT_CREATED: ${{ needs.sign.outputs.snapshot_created }}
           CHECK: ${{ needs.check.result }}
           BUILD: ${{ needs.build.result }}
@@ -215,6 +250,9 @@ jobs:
         run: |
           status=0
           test "$CHECK" = success || status=1
+          if [ "$RUN_INTEGRATION" = true ]; then
+            test "$INTEGRATION" = success || status=1
+          fi
           if [ "$HAS_ORIGINS" = true ]; then
             test "$BUILD" = success || status=1
           fi
