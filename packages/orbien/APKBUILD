@@ -1,5 +1,5 @@
 pkgname=orbien
-pkgver=3.6.1
+pkgver=3.7.0
 pkgrel=0
 pkgdesc="Lightweight high-performance intranet tunneling client"
 url="https://github.com/orbien-org/orbien"
@@ -80,6 +80,6 @@ server_openrc() {
 }
 
 sha512sums="
-43c226d6c165fee870f6c01a1e357b18395e92346cd6d3b4670bf5419afe060353046095c462746af66eb58ae185f14605e293e3affafed890254c6ac4e3ff37  orbien-3.6.1.tar.gz
+1b320c13290f93deaf5831beb28cdf1cfb41935c84056478bd73c7f2aec3cd644c3005bcde29f15a0ad38b05b4f61eb44b4041f988a49bc6bc70b386452d9e3a  orbien-3.7.0.tar.gz
 8de7dbac30ee25a7ac4b9c33dda44a71d5832982ae9cf2dabf88ea5d245273633c52df24e3c9586f5c28fe6e5147c7dd06cccb15652ab811b5d7ceb7a8e0cfa3  orbien-server.initd
 "
