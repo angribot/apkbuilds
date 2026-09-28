@@ -1,6 +1,6 @@
 pkgname=orbien
 pkgver=3.8.0
-pkgrel=0
+pkgrel=1
 pkgdesc="Lightweight high-performance intranet tunneling client"
 url="https://github.com/orbien-org/orbien"
 arch="x86_64 aarch64"
@@ -24,7 +24,7 @@ source="orbien-$pkgver.tar.gz::https://github.com/orbien-org/orbien/archive/refs
 prepare() {
 	default_prepare
 	# Use crates.io instead of upstream's rsproxy source replacement.
-	rm .cargo/config.toml
+	rm -f .cargo/config.toml
 	cargo fetch --target="$CTARGET" --locked
 	# Install exactly the dashboard dependency graph recorded by upstream.
 	(
