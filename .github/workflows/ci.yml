@@ -267,7 +267,9 @@ jobs:
 
   publish:
     needs: [ci, sign, verify]
+    # Optional ancestors may be skipped; do not inherit implicit success().
     if: >-
+      !cancelled() &&
       github.ref_name == github.event.repository.default_branch &&
       needs.ci.result == 'success' && needs.sign.result == 'success' &&
       needs.sign.outputs.snapshot_created == 'true' &&
@@ -291,3 +293,29 @@ jobs:
           source/scripts/publish-repository.sh \
             "$GITHUB_WORKSPACE/pages" "$GITHUB_SHA" \
             "git@github.com:$GITHUB_REPOSITORY.git"
+
+  # Keep the stable PR check above; publication is checked after the push.
+  publication:
+    needs: [ci, sign, publish]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Require publication of every created snapshot
+        env:
+          EVENT: ${{ github.event_name }}
+          CI: ${{ needs.ci.result }}
+          SIGN: ${{ needs.sign.result }}
+          SNAPSHOT_CREATED: ${{ needs.sign.outputs.snapshot_created }}
+          PUBLISH: ${{ needs.publish.result }}
+        run: |
+          test "$CI" = success || exit 1
+          [ "$EVENT" = push ] || exit 0
+          case "$SIGN" in
+            success|skipped) ;;
+            *) exit 1 ;;
+          esac
+          if [ "$SNAPSHOT_CREATED" = true ] && [ "$PUBLISH" != success ]; then
+            printf '::error::Snapshot created but publication result is %s\n' "$PUBLISH"
+            exit 1
+          fi
