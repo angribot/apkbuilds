@@ -132,11 +132,38 @@ class PublicationJobGraphTest(unittest.TestCase):
                     )
                     self.assertEqual(completed.returncode, expected, completed.stderr)
 
+    def test_publication_completion_rejects_an_unpublished_snapshot(self):
+        completion = self.jobs["publication"]
+        self.assertEqual({"ci", "sign", "publish"}, job_needs(completion))
+        self.assertEqual("always()", job_value(completion, "if"))
+        script = textwrap.dedent(completion.split("        run: |\n", 1)[1])
+        for event, ci, sign, snapshot, publish, expected in (
+            ("push", "success", "success", "true", "success", 0),
+            ("push", "success", "success", "true", "skipped", 1),
+            ("push", "success", "success", "true", "failure", 1),
+            ("push", "success", "success", "true", "cancelled", 1),
+            ("push", "success", "success", "false", "skipped", 0),
+            ("push", "failure", "skipped", "", "skipped", 1),
+            ("push", "success", "failure", "", "skipped", 1),
+            ("pull_request", "success", "skipped", "", "skipped", 0),
+            ("pull_request", "failure", "skipped", "", "skipped", 1),
+        ):
+            with self.subTest(event=event, snapshot=snapshot, publish=publish, ci=ci, sign=sign):
+                completed = subprocess.run(
+                    ["sh", "-c", script], capture_output=True, text=True,
+                    env={
+                        **os.environ, "EVENT": event, "CI": ci, "SIGN": sign,
+                        "SNAPSHOT_CREATED": snapshot, "PUBLISH": publish,
+                    },
+                )
+                self.assertEqual(completed.returncode, expected, completed.stderr)
+
     def test_publish_requires_the_default_branch_and_every_prior_success(self):
         publish = self.jobs["publish"]
         lines = job_lines(publish)
 
         self.assertEqual({"ci", "sign", "verify"}, job_needs(publish))
+        self.assertIn("!cancelled() &&", lines)
         for condition in (
             "github.ref_name == github.event.repository.default_branch &&",
             "needs.ci.result == 'success' && needs.sign.result == 'success' &&",
