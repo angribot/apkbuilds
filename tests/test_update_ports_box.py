@@ -26,20 +26,32 @@ class UpdatePortsBoxTest(unittest.TestCase):
             apkbuild = Path(directory) / "ports-box" / "APKBUILD"
             apkbuild.parent.mkdir()
             apkbuild.write_text(
-                "pkgver=0.1.2\npkgrel=1\n" + "a" * 128 + "  ports-box-0.1.2.tar.gz\n"
+                "pkgver=0.1.3\npkgrel=2\n"
+                'source="ports-box-$pkgver.tar.gz::https://github.com/Yuu518/ports-box/'
+                'archive/refs/tags/v$pkgver.tar.gz\n\tports-box.initd\n\t"\n'
+                'sha512sums="\n'
+                + "a" * 128 + "  ports-box-0.1.3.tar.gz\n"
+                + "b" * 128 + '  ports-box.initd\n"\n'
             )
             responses = {
                 "https://api.github.com/repos/Yuu518/ports-box/releases?per_page=100":
-                    json.dumps([{"tag_name": "v0.1.3"}]).encode(),
-                "https://github.com/Yuu518/ports-box/archive/refs/tags/v0.1.3.tar.gz": source,
+                    json.dumps([
+                        {"tag_name": "0.3.0", "draft": False, "prerelease": False},
+                        {"tag_name": "0.2.0", "draft": False, "prerelease": False},
+                    ]).encode(),
+                "https://github.com/Yuu518/ports-box/archive/refs/tags/0.3.0.tar.gz": source,
             }
             with mock.patch.object(shared_update, "download", side_effect=responses.__getitem__), \
                     mock.patch.object(update, "APKBUILD", apkbuild):
                 update.main([])
             self.assertEqual(
                 apkbuild.read_text(),
-                "pkgver=0.1.3\npkgrel=0\n"
-                + hashlib.sha512(source).hexdigest() + "  ports-box-0.1.3.tar.gz\n",
+                "pkgver=0.3.0\npkgrel=0\n"
+                'source="ports-box-$pkgver.tar.gz::https://github.com/Yuu518/ports-box/'
+                'archive/refs/tags/$pkgver.tar.gz\n\tports-box.initd\n\t"\n'
+                'sha512sums="\n'
+                + hashlib.sha512(source).hexdigest() + "  ports-box-0.3.0.tar.gz\n"
+                + "b" * 128 + '  ports-box.initd\n"\n',
             )
 
 
