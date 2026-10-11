@@ -1,23 +1,28 @@
 pkgname=zerostack
 pkgver=1.8.5
-pkgrel=0
+pkgrel=1
 pkgdesc="Minimalistic coding agent written in Rust"
 url="https://github.com/gi-dellav/zerostack"
 arch="x86_64 aarch64"
 license="GPL-3.0-only"
 # zerostack shells out to bash for tool execution.
 depends="bash"
-# ring (via rustls) compiles C/asm in its build script.
+# AWS-LC (via rustls) compiles C/asm in its build script.
 makedepends="
 	cargo
 	rust
 	build-base
+	cmake
+	samurai
 	"
 # detect_git_branch_in_repo_returns_nonempty expects a git checkout,
 # but abuild extracts a source tarball. The staged APK is tested with
 # its repository read-only.
 options="!check !strip"
 source="zerostack-$pkgver.tar.gz::https://github.com/gi-dellav/zerostack/archive/refs/tags/v$pkgver.tar.gz"
+
+# The cc backend lets Alpine's -Os override jitterentropy's required -O0.
+export AWS_LC_SYS_CMAKE_BUILDER=1
 
 prepare() {
 	default_prepare
