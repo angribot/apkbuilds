@@ -8,7 +8,7 @@ APKBUILD = ROOT / "packages/ports-box/APKBUILD"
 
 
 def main(argv=None):
-    update_source_archive("Yuu518/ports-box", APKBUILD, argv)
+    update_source_archive("Yuu518/ports-box", APKBUILD, argv, tag_prefix="")
 
 
 if __name__ == "__main__":

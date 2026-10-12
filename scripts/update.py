@@ -54,11 +54,12 @@ def declared_version(text):
     return match.group(1)
 
 
-def update_source_archive(repository, apkbuild, argv=None):
+def update_source_archive(repository, apkbuild, argv=None, *, tag_prefix="v"):
     """Update a GitHub tag archive for the package origin containing apkbuild.
 
     repository is the GitHub owner/name; the archive basename is the origin's
-    directory name. Only non-draft, non-prerelease vX.Y.Z releases qualify.
+    directory name. Only non-draft, non-prerelease X.Y.Z releases with the
+    configured tag_prefix (default "v") qualify.
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
@@ -72,7 +73,9 @@ def update_source_archive(repository, apkbuild, argv=None):
     for release in releases:
         if not isinstance(release, dict) or release.get("draft") or release.get("prerelease"):
             continue
-        match = re.fullmatch(r"v(\d+\.\d+\.\d+)", release.get("tag_name", ""))
+        match = re.fullmatch(
+            rf"{re.escape(tag_prefix)}(\d+\.\d+\.\d+)", release.get("tag_name", "")
+        )
         if match:
             candidates.append((version_key(match.group(1)), match.group(1)))
     if not candidates:
@@ -84,7 +87,7 @@ def update_source_archive(repository, apkbuild, argv=None):
         return
 
     source = download(
-        f"https://github.com/{repository}/archive/refs/tags/v{version}.tar.gz"
+        f"https://github.com/{repository}/archive/refs/tags/{tag_prefix}{version}.tar.gz"
     )
     digest = hashlib.sha512(source).hexdigest()
     if args.check:
@@ -92,6 +95,10 @@ def update_source_archive(repository, apkbuild, argv=None):
 
     origin = apkbuild.parent.name
     text = bump_apkbuild_version(text, version)
+    text = text.replace(
+        f"https://github.com/{repository}/archive/refs/tags/v$pkgver.tar.gz",
+        f"https://github.com/{repository}/archive/refs/tags/{tag_prefix}$pkgver.tar.gz",
+    )
     pattern = rf"^[0-9a-f]{{128}}  {re.escape(origin)}-{re.escape(declared)}\.tar\.gz$"
     text, count = re.subn(
         pattern, f"{digest}  {origin}-{version}.tar.gz", text,
