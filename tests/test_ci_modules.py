@@ -2,6 +2,7 @@
 
 import os
 import pathlib
+import re
 import shutil
 import stat
 import subprocess
@@ -39,7 +40,7 @@ def install_fake_docker(fake_bin):
         if not args:
             raise SystemExit(2)
         if args[0] == "build":
-            raise SystemExit(int(os.environ.get("FAKE_DOCKER_BUILD_EXIT", "0")))
+            raise SystemExit(0)
         if args[0] != "run":
             raise SystemExit(2)
 
@@ -81,7 +82,7 @@ def install_fake_docker(fake_bin):
 
         failed_run = int(os.environ.get("FAKE_DOCKER_FAIL_RUN", "0"))
         if failed_run == count:
-            raise SystemExit(int(os.environ.get("FAKE_DOCKER_RUN_EXIT", "1")))
+            raise SystemExit(1)
         if os.environ.get("FAKE_DOCKER_PASSTHROUGH") != "1":
             raise SystemExit(0)
 
@@ -157,16 +158,10 @@ class CiModuleTest(unittest.TestCase):
         return workspace
 
     def test_module_interfaces_expose_only_domain_inputs(self):
-        expected_usage = {
-            "build": (
-                "usage: build-package-family.sh --origin ORIGIN --arch ARCH "
-                "--source-revision REVISION --published URL"
-            ),
-            "sign": "usage: sign-repository.sh",
-            "verify": (
-                "usage: verify-repository.sh --arch ARCH|all "
-                "[--install-declared-builds]"
-            ),
+        expected_options = {
+            "build": {"--origin", "--arch", "--source-revision", "--published"},
+            "sign": set(),
+            "verify": {"--arch", "--install-declared-builds"},
         }
         for name, path in MODULES.items():
             with self.subTest(module=name):
@@ -174,7 +169,11 @@ class CiModuleTest(unittest.TestCase):
                     ["sh", str(path), "--help"], capture_output=True, text=True
                 )
                 self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assertEqual(completed.stdout.strip(), expected_usage[name])
+                self.assertIn(path.name, completed.stdout)
+                self.assertEqual(
+                    set(re.findall(r"--[a-z-]+", completed.stdout)) - {"--help"},
+                    expected_options[name],
+                )
 
     def test_all_operation_scripts_are_valid_posix_shell(self):
         paths = [*MODULES.values(), *(SCRIPTS / "operations").glob("*.sh")]
@@ -217,20 +216,35 @@ class CiModuleTest(unittest.TestCase):
         self.assertIn("arch=x86_64", completed.stderr)
         self.assertIn("package-origin=demo", completed.stderr)
 
-    def test_build_module_stages_a_complete_split_family(self):
+    def test_build_module_smokes_new_and_published_families_without_forced_builds(self):
+        for published in (False, True):
+            for smoke_exit in (0, 7):
+                with self.subTest(published=published, smoke_exit=smoke_exit):
+                    self.check_build_family(published, smoke_exit)
+
+    def check_build_family(self, published, smoke_exit):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
-            workspace = self.workspace(root)
+            workspace = self.workspace(root, "cloudflared")
             write_executable(workspace / "scripts" / "prepare-builder.sh", "exit 0\n")
+            write_executable(
+                workspace / "scripts" / "test-cloudflared.sh",
+                'printf "%s\\n" "$1" > "$SMOKE_RESULT"\nexit "$SMOKE_EXIT"\n',
+            )
             index_dir = root / "index"
             index_dir.mkdir()
+            version = "1-r0" if published else "0-r0"
             (index_dir / "APKINDEX").write_text(
-                "P:old-alpha\nV:0-r0\nA:x86_64\no:alpha\n"
+                f"P:cloudflared\nV:{version}\nA:x86_64\no:cloudflared\n\n"
+                f"P:cloudflared-tools\nV:{version}\nA:x86_64\no:cloudflared\n"
             )
             fake_bin = root / "bin"
             fake_bin.mkdir()
             install_fake_docker(fake_bin)
-            write_executable(fake_bin / "apk", "exit 0\n")
+            write_executable(
+                fake_bin / "apk",
+                'if [ "$1" = add ]; then printf "%s\\n" "$@" > "$APK_ADD_LOG"; fi\n',
+            )
             write_executable(
                 fake_bin / "cp",
                 r'''
@@ -246,13 +260,14 @@ class CiModuleTest(unittest.TestCase):
                 case "$*" in
                   *CARGO_HOME*|*SCCACHE_DIR*|*RUSTC_WRAPPER*) exit 98 ;;
                   *abuild\ listpkg*)
-                    printf '%s\n' alpha-1-r0.apk alpha-tools-1-r0.apk
+                    printf '%s\n' cloudflared-1-r0.apk cloudflared-tools-1-r0.apk
                     ;;
                   *abuild\ -r*)
-                    built="$APKBUILDS_OUTPUT/alpha/packages/x86_64"
+                    : > "$COMPILE_LOG"
+                    built="$APKBUILDS_OUTPUT/cloudflared/packages/x86_64"
                     mkdir -p "$built"
-                    : > "$built/alpha-1-r0.apk"
-                    : > "$built/alpha-tools-1-r0.apk"
+                    : > "$built/cloudflared-1-r0.apk"
+                    : > "$built/cloudflared-tools-1-r0.apk"
                     ;;
                 esac
                 exit 0
@@ -279,6 +294,10 @@ class CiModuleTest(unittest.TestCase):
                 {
                     "FAKE_DOCKER_PASSTHROUGH": "1",
                     "FAKE_INDEX": str(index_dir),
+                    "SMOKE_RESULT": str(root / "smoke"),
+                    "SMOKE_EXIT": str(smoke_exit),
+                    "COMPILE_LOG": str(root / "compiled"),
+                    "APK_ADD_LOG": str(root / "installed"),
                 }
             )
             completed = subprocess.run(
@@ -286,7 +305,7 @@ class CiModuleTest(unittest.TestCase):
                     "sh",
                     str(MODULES["build"]),
                     "--origin",
-                    "alpha",
+                    "cloudflared",
                     "--arch",
                     "x86_64",
                     "--source-revision",
@@ -298,19 +317,28 @@ class CiModuleTest(unittest.TestCase):
                 text=True,
                 env=env,
             )
-            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(completed.returncode, smoke_exit, completed.stderr)
+            self.assertEqual((root / "smoke").read_text(), "1\n")
+            installed = (root / "installed").read_text()
+            for package in ("cloudflared-1-r0.apk", "cloudflared-tools-1-r0.apk"):
+                self.assertIn(package, installed)
+            self.assertEqual((root / "compiled").exists(), not published)
+            if smoke_exit:
+                self.assertFalse(github_output.exists())
+                self.assertFalse(list((root / "runner/new/built").rglob("*.apk")))
+                return
             outputs = dict(
                 line.split("=", 1) for line in github_output.read_text().splitlines()
             )
-            family = pathlib.Path(outputs["artifact"]) / "x86_64" / "alpha"
-            self.assertEqual(
-                {package.name for package in family.glob("*.apk")},
-                {"alpha-1-r0.apk", "alpha-tools-1-r0.apk"},
-            )
+            family = pathlib.Path(outputs["artifact"]) / "x86_64" / "cloudflared"
+            expected = set() if published else {
+                "cloudflared-1-r0.apk", "cloudflared-tools-1-r0.apk",
+            }
+            self.assertEqual({package.name for package in family.glob("*.apk")}, expected)
             self.assertIn("source revision=revision", completed.stdout)
             self.assertIn("declared build=1-r0", completed.stdout)
-            self.assertIn("published build(s)=0-r0", completed.stdout)
-            self.assertEqual(outputs["built"], "true")
+            self.assertIn(f"published build(s)={version}", completed.stdout)
+            self.assertEqual(outputs["built"], str(not published).lower())
 
     def write_repository_arch(
         self, root, arch, version, package_contents, packages=("alpha",)
@@ -636,7 +664,12 @@ class CiModuleTest(unittest.TestCase):
             self.assertNotEqual(rejected.returncode, 0)
             self.assertFalse(unsigned_output.exists())
 
-    def test_sign_module_confines_and_removes_the_private_key(self):
+    def test_sign_module_confines_and_removes_the_private_key_on_success_and_failure(self):
+        for failed_run in (0, 1, 2, 3):
+            with self.subTest(failed_run=failed_run):
+                self.check_sign_key_cleanup(failed_run)
+
+    def check_sign_key_cleanup(self, failed_run):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             workspace = self.workspace(root)
@@ -653,6 +686,7 @@ class CiModuleTest(unittest.TestCase):
                 {
                     "ABUILD_PRIVATE_KEY": "private",
                     "FAKE_DOCKER_ENFORCE_KEY_ISOLATION": "1",
+                    "FAKE_DOCKER_FAIL_RUN": str(failed_run),
                 }
             )
             completed = subprocess.run(
@@ -661,12 +695,17 @@ class CiModuleTest(unittest.TestCase):
                 text=True,
                 env=env,
             )
-            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(completed.returncode, int(failed_run != 0), completed.stderr)
+            self.assertFalse((runner_temp / "repository-signing-key").exists())
+            self.assertNotIn("private", completed.stdout + completed.stderr)
             remaining_files = (
                 path for path in runner_temp.rglob("*") if path.is_file()
             )
             self.assertNotIn(b"private\n", (path.read_bytes() for path in remaining_files))
-            self.assertEqual(github_output.read_text().strip(), "snapshot_created=true")
+            if failed_run:
+                self.assertFalse(github_output.exists())
+            else:
+                self.assertEqual(github_output.read_text().strip(), "snapshot_created=true")
 
 
 if __name__ == "__main__":

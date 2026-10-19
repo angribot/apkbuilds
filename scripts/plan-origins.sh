@@ -59,7 +59,19 @@ done
 if [ "$EVENT" = push ]; then
   origins=$(all_origins)
 else
-  origins=$(changed_origins "$changed")
+  origins=$({
+    changed_origins "$changed"
+    while IFS= read -r path; do
+      case "$path" in
+        (scripts/test-package.sh) printf '%s\n' gnupg ;;
+        (scripts/test-cloudflared.sh) printf '%s\n' cloudflared ;;
+        (scripts/test-orbien.sh) printf '%s\n' orbien ;;
+        (scripts/test-ports-box-service.sh) printf '%s\n' ports-box ;;
+        (scripts/test-realm-service.sh) printf '%s\n' realm ;;
+        (scripts/test-tirith.sh) printf '%s\n' tirith ;;
+      esac
+    done < "$changed"
+  } | sort -u)
 fi
 
 for origin in $origins; do

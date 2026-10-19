@@ -30,6 +30,27 @@ failure() {
 }
 trap failure EXIT
 
+smoke_family() {
+  family_directory=$1
+  stage=smoke
+  set -- apk add --allow-untrusted
+  for package in "$family_directory"/*.apk; do set -- "$@" "$package"; done
+  if ! "$@"; then
+    printf '::error::build stage=install arch=%s package-origin=%s declared-build=%s published-build(s)=%s\n' \
+      "$arch" "$origin" "$declared" "$published_builds" >&2
+    exit 1
+  fi
+  version=$(apkbuild_field pkgver "$workspace/packages/$origin/APKBUILD")
+  case "$origin" in
+    gnupg) "$workspace/scripts/test-package.sh" "$version" ;;
+    orbien) "$workspace/scripts/test-orbien.sh" ;;
+    ports-box) "$workspace/scripts/test-ports-box-service.sh" ;;
+    realm) "$workspace/scripts/test-realm-service.sh" ;;
+    cloudflared) "$workspace/scripts/test-cloudflared.sh" "$version" ;;
+    tirith) "$workspace/scripts/test-tirith.sh" "$version" ;;
+  esac
+}
+
 stage=source-copy
 # Keep the staged checkout's repository directory named `packages`. abuild
 # places packages under REPODEST/<repository>/<arch>, where <repository> is
@@ -89,6 +110,7 @@ if [ "$published_family_matches" = true ]; then
   done < "$expected"
   printf '==> %s package family already published: source revision=%s declared build=%s published build(s)=%s\n' \
     "$origin" "$source_revision" "$declared" "$published_builds"
+  smoke_family "$published_apks"
   exit 0
 fi
 
@@ -120,31 +142,7 @@ if ! package_sets_equal "$expected" "$actual"; then
   exit 1
 fi
 
-stage=smoke
-set -- apk add --allow-untrusted --repository "$built"
-for package in "$built"/*.apk; do set -- "$@" "$package"; done
-if ! "$@"; then
-  printf '::error::build stage=install arch=%s package-origin=%s declared-build=%s published-build(s)=%s\n' \
-    "$arch" "$origin" "$declared" "$published_builds" >&2
-  exit 1
-fi
-case "$origin" in
-  gnupg)
-    "$workspace/scripts/test-package.sh" \
-      "$(apkbuild_field pkgver "$workspace/packages/gnupg/APKBUILD")"
-    ;;
-  orbien) "$workspace/scripts/test-orbien.sh" ;;
-  ports-box) "$workspace/scripts/test-ports-box-service.sh" ;;
-  realm) "$workspace/scripts/test-realm-service.sh" ;;
-  cloudflared)
-    "$workspace/scripts/test-cloudflared.sh" \
-      "$(apkbuild_field pkgver "$workspace/packages/cloudflared/APKBUILD")"
-    ;;
-  tirith)
-    "$workspace/scripts/test-tirith.sh" \
-      "$(apkbuild_field pkgver "$workspace/packages/tirith/APKBUILD")"
-    ;;
-esac
+smoke_family "$built"
 
 stage=output
 candidate="$output/built/$arch/$origin"

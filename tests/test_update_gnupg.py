@@ -1,10 +1,13 @@
+import hashlib
 import importlib.util
+import io
 import os
 import stat
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -21,6 +24,7 @@ FAKE_GPG = """\
 #!/usr/bin/env python3
 import os
 import sys
+from pathlib import Path
 
 log = os.environ.get("FAKE_GPG_LOG")
 if log:
@@ -28,6 +32,8 @@ if log:
         handle.write(" ".join(sys.argv[1:]) + "\\n")
 if "--import" in sys.argv[1:]:
     raise SystemExit(0)
+if Path(sys.argv[-1]).read_bytes() != b"source" or Path(sys.argv[-2]).read_bytes() != b"signature":
+    raise SystemExit(1)
 status = os.environ.get("FAKE_GPG_STATUS", "")
 if status:
     sys.stdout.write(status)
@@ -61,7 +67,7 @@ class UpdateGnupgTest(unittest.TestCase):
             update.updated_apkbuild("pkgver=2.4.9\npkgrel=0\n", "2.5.21", "b" * 128)
 
 
-class VerifySignerTest(unittest.TestCase):
+class GnupgAuthenticationTest(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -74,7 +80,45 @@ class VerifySignerTest(unittest.TestCase):
         self.env = {
             "PATH": os.pathsep.join([str(fake_bin), os.environ["PATH"]]),
             "FAKE_GPG_LOG": str(self.log),
+            "FAKE_GPG_STATUS": validsig(PINNED_FINGERPRINT),
+            "FAKE_GPG_EXIT": "0",
         }
+        self.apkbuild = Path(directory.name) / "APKBUILD"
+        self.original = "pkgver=2.4.9\npkgrel=3\n" + "a" * 128 + "  gnupg-2.4.9.tar.bz2\n"
+        self.apkbuild.write_text(self.original)
+
+    def run_update(self, argv=()):
+        responses = {
+            "https://gnupg.org/ftp/gcrypt/gnupg/": b'<a href="gnupg-2.5.21.tar.bz2">release</a>',
+            "https://gnupg.org/ftp/gcrypt/gnupg/gnupg-2.5.21.tar.bz2": b"source",
+            "https://gnupg.org/ftp/gcrypt/gnupg/gnupg-2.5.21.tar.bz2.sig": b"signature",
+        }
+        with mock.patch.object(update, "APKBUILD", self.apkbuild), \
+                mock.patch.object(update, "download", side_effect=responses.__getitem__), \
+                mock.patch.object(sys, "argv", ["update-gnupg.py", *argv]), \
+                mock.patch.dict(os.environ, self.env), redirect_stdout(io.StringIO()):
+            update.main()
+
+    def test_main_updates_checksums_only_after_authentication(self):
+        self.run_update()
+        self.assertEqual(
+            self.apkbuild.read_text(),
+            "pkgver=2.5.21\npkgrel=0\n"
+            + hashlib.sha512(b"source").hexdigest() + "  gnupg-2.5.21.tar.bz2\n",
+        )
+        self.assertIn("--verify", self.log.read_text())
+
+    def test_main_leaves_apkbuild_unchanged_when_authentication_fails(self):
+        self.env["FAKE_GPG_STATUS"] = validsig(UNPINNED_FINGERPRINT)
+        with self.assertRaisesRegex(ValueError, "untrusted release signer"):
+            self.run_update()
+        self.assertEqual(self.apkbuild.read_text(), self.original)
+
+    def test_check_authenticates_without_writing_an_available_update(self):
+        with self.assertRaisesRegex(SystemExit, "update available: 2.5.21"):
+            self.run_update(["--check"])
+        self.assertEqual(self.apkbuild.read_text(), self.original)
+        self.assertIn("--verify", self.log.read_text())
 
     def verify_with_gpg(self, status="", exit_code=0):
         self.env["FAKE_GPG_STATUS"] = status

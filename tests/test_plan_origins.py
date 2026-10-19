@@ -149,6 +149,36 @@ class PlanOriginsTest(unittest.TestCase):
             {("alpha", "x86_64"), ("alpha", "aarch64")},
         )
 
+    def test_smoke_script_pr_selects_its_origin_on_both_architectures(self):
+        scripts = {
+            "test-package.sh": "gnupg",
+            "test-cloudflared.sh": "cloudflared",
+            "test-orbien.sh": "orbien",
+            "test-ports-box-service.sh": "ports-box",
+            "test-realm-service.sh": "realm",
+            "test-tirith.sh": "tirith",
+        }
+        for script, origin in scripts.items():
+            with self.subTest(script=script):
+                self.git("switch", "-q", "main")
+                (self.root / "packages" / origin).mkdir()
+                self.write_apkbuild(origin, "1.0.0")
+                self.commit("add smoke-tested origin", f"packages/{origin}/APKBUILD")
+                before = self.revision()
+                path = f"scripts/{script}"
+                (self.root / path).write_text("#!/bin/sh\nexit 1\n")
+                self.commit("change smoke script", path)
+                completed = self.run_plan(
+                    event="pull_request", revision=self.revision(), base=before,
+                )
+                outputs = self.plan_outputs(completed)
+                self.assertEqual(outputs["origins"], origin)
+                self.assertEqual(outputs["run_integration"], "false")
+                self.assertEqual(
+                    {(item["origin"], item["arch"]) for item in self.matrix_entries(completed)},
+                    {(origin, "x86_64"), (origin, "aarch64")},
+                )
+
     def test_automation_pr_selects_integration_without_production_builds(self):
         completed = self.run_plan(
             event="pull_request",
