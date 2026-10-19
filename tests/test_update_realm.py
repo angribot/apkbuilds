@@ -91,23 +91,20 @@ class UpdateRealmTest(unittest.TestCase):
             'aarch64)\n\t_sha512="' + hashlib.sha512(b"aarch64").hexdigest() + '"\n',
         )
 
-    def test_main_rejects_unexpected_asset_urls_without_writing(self):
+    def test_update_and_check_reject_unauthenticated_assets_without_partial_writes(self):
+        failures = (
+            ("browser_download_url", "https://example.invalid/asset", "unexpected .* asset URL"),
+            ("digest", None, "GitHub asset digest"),
+            ("digest", "sha256:" + "0" * 64, "GitHub asset digest"),
+        )
         for asset in self.assets:
-            with self.subTest(asset=asset["name"]), mock.patch.dict(
-                asset, {"browser_download_url": "https://example.invalid/asset"}
-            ):
-                with self.assertRaisesRegex(ValueError, "unexpected .* asset URL"):
-                    self.run_update()
-                self.assertEqual(self.apkbuild.read_text(), self.original)
-
-    def test_main_rejects_invalid_asset_digests_without_partial_writes(self):
-        for asset in self.assets:
-            for digest in (None, "sha256:" + "0" * 64):
-                with self.subTest(asset=asset["name"], digest=digest):
-                    with mock.patch.dict(asset, {"digest": digest}):
-                        with self.assertRaisesRegex(ValueError, "GitHub asset digest"):
-                            self.run_update()
-                    self.assertEqual(self.apkbuild.read_text(), self.original)
+            for field, value, message in failures:
+                for argv in ([], ["--check"]):
+                    with self.subTest(asset=asset["name"], field=field, value=value, argv=argv), \
+                            mock.patch.dict(asset, {field: value}):
+                        with self.assertRaisesRegex(ValueError, message):
+                            self.run_update(argv)
+                        self.assertEqual(self.apkbuild.read_text(), self.original)
 
     def test_check_authenticates_both_assets_without_writing(self):
         with self.assertRaisesRegex(SystemExit, "update available: 2.10.0"):

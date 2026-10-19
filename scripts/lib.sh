@@ -18,6 +18,16 @@ supports_arch() {
   return 1
 }
 
+# Print the smoke script for a package origin, or nothing when none applies.
+# Callers pass the declared package version as the script's first argument.
+smoke_script() {
+  case "$1" in
+    gnupg) printf '%s\n' scripts/test-package.sh ;;
+    ports-box|realm) printf 'scripts/test-%s-service.sh\n' "$1" ;;
+    cloudflared|orbien|tirith) printf 'scripts/test-%s.sh\n' "$1" ;;
+  esac
+}
+
 # Print every package origin in the tree, one per line.
 all_origins() {
   find packages -mindepth 2 -maxdepth 2 -name APKBUILD \

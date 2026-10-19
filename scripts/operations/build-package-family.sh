@@ -33,7 +33,7 @@ trap failure EXIT
 smoke_family() {
   family_directory=$1
   stage=smoke
-  set -- apk add --allow-untrusted
+  set -- apk add --allow-untrusted --repository "$family_directory"
   for package in "$family_directory"/*.apk; do set -- "$@" "$package"; done
   if ! "$@"; then
     printf '::error::build stage=install arch=%s package-origin=%s declared-build=%s published-build(s)=%s\n' \
@@ -41,14 +41,10 @@ smoke_family() {
     exit 1
   fi
   version=$(apkbuild_field pkgver "$workspace/packages/$origin/APKBUILD")
-  case "$origin" in
-    gnupg) "$workspace/scripts/test-package.sh" "$version" ;;
-    orbien) "$workspace/scripts/test-orbien.sh" ;;
-    ports-box) "$workspace/scripts/test-ports-box-service.sh" ;;
-    realm) "$workspace/scripts/test-realm-service.sh" ;;
-    cloudflared) "$workspace/scripts/test-cloudflared.sh" "$version" ;;
-    tirith) "$workspace/scripts/test-tirith.sh" "$version" ;;
-  esac
+  smoke=$(smoke_script "$origin")
+  if [ -n "$smoke" ]; then
+    "$workspace/$smoke" "$version"
+  fi
 }
 
 stage=source-copy
@@ -110,6 +106,7 @@ if [ "$published_family_matches" = true ]; then
   done < "$expected"
   printf '==> %s package family already published: source revision=%s declared build=%s published build(s)=%s\n' \
     "$origin" "$source_revision" "$declared" "$published_builds"
+  cp "$published_directory/APKINDEX.tar.gz" "$published_apks/"
   smoke_family "$published_apks"
   exit 0
 fi

@@ -1,5 +1,6 @@
 """Behavior tests for the public CI operation-module interfaces."""
 
+import hashlib
 import os
 import pathlib
 import re
@@ -31,6 +32,7 @@ def install_fake_docker(fake_bin):
         fake_bin / "docker",
         r'''
         #!/usr/bin/env python3
+        import hashlib
         import os
         import pathlib
         import subprocess
@@ -79,6 +81,9 @@ def install_fake_docker(fake_bin):
             if has_private_key and network != "none":
                 print("private key entered a networked container", file=sys.stderr)
                 raise SystemExit(97)
+            if has_private_key:
+                key_digest = hashlib.sha256(pathlib.Path(mounts["/private-key"]).read_bytes())
+                (count_path.parent / "signing-key.sha256").write_text(key_digest.hexdigest())
 
         failed_run = int(os.environ.get("FAKE_DOCKER_FAIL_RUN", "0"))
         if failed_run == count:
@@ -174,6 +179,8 @@ class CiModuleTest(unittest.TestCase):
                     set(re.findall(r"--[a-z-]+", completed.stdout)) - {"--help"},
                     expected_options[name],
                 )
+                for option in expected_options[name] - {"--install-declared-builds"}:
+                    self.assertRegex(completed.stdout, rf"{option}\s+[A-Z][A-Za-z_|]*")
 
     def test_all_operation_scripts_are_valid_posix_shell(self):
         paths = [*MODULES.values(), *(SCRIPTS / "operations").glob("*.sh")]
@@ -243,7 +250,10 @@ class CiModuleTest(unittest.TestCase):
             install_fake_docker(fake_bin)
             write_executable(
                 fake_bin / "apk",
-                'if [ "$1" = add ]; then printf "%s\\n" "$@" > "$APK_ADD_LOG"; fi\n',
+                'if [ "$1" = add ]; then\n'
+                '  test -f "$4/APKINDEX.tar.gz" || exit 88\n'
+                '  printf "%s\\n" "$@" > "$APK_ADD_LOG"\n'
+                'fi\n',
             )
             write_executable(
                 fake_bin / "cp",
@@ -268,6 +278,7 @@ class CiModuleTest(unittest.TestCase):
                     mkdir -p "$built"
                     : > "$built/cloudflared-1-r0.apk"
                     : > "$built/cloudflared-tools-1-r0.apk"
+                    : > "$built/APKINDEX.tar.gz"
                     ;;
                 esac
                 exit 0
@@ -319,12 +330,14 @@ class CiModuleTest(unittest.TestCase):
             )
             self.assertEqual(completed.returncode, smoke_exit, completed.stderr)
             self.assertEqual((root / "smoke").read_text(), "1\n")
-            installed = (root / "installed").read_text()
+            installed = (root / "installed").read_text().splitlines()
+            repository = pathlib.Path(installed[installed.index("--repository") + 1])
             for package in ("cloudflared-1-r0.apk", "cloudflared-tools-1-r0.apk"):
-                self.assertIn(package, installed)
+                self.assertIn(str(repository / package), installed)
             self.assertEqual((root / "compiled").exists(), not published)
             if smoke_exit:
-                self.assertFalse(github_output.exists())
+                output = github_output.read_text() if github_output.exists() else ""
+                self.assertNotIn("built=true", output)
                 self.assertFalse(list((root / "runner/new/built").rglob("*.apk")))
                 return
             outputs = dict(
@@ -670,6 +683,7 @@ class CiModuleTest(unittest.TestCase):
                 self.check_sign_key_cleanup(failed_run)
 
     def check_sign_key_cleanup(self, failed_run):
+        secret = "test-repository-signing-secret"
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             workspace = self.workspace(root)
@@ -684,7 +698,7 @@ class CiModuleTest(unittest.TestCase):
             (candidate / "alpha-1-r0.apk").write_bytes(b"candidate")
             env.update(
                 {
-                    "ABUILD_PRIVATE_KEY": "private",
+                    "ABUILD_PRIVATE_KEY": secret,
                     "FAKE_DOCKER_ENFORCE_KEY_ISOLATION": "1",
                     "FAKE_DOCKER_FAIL_RUN": str(failed_run),
                 }
@@ -696,16 +710,24 @@ class CiModuleTest(unittest.TestCase):
                 env=env,
             )
             self.assertEqual(completed.returncode, int(failed_run != 0), completed.stderr)
-            self.assertFalse((runner_temp / "repository-signing-key").exists())
-            self.assertNotIn("private", completed.stdout + completed.stderr)
-            remaining_files = (
-                path for path in runner_temp.rglob("*") if path.is_file()
-            )
-            self.assertNotIn(b"private\n", (path.read_bytes() for path in remaining_files))
-            if failed_run:
-                self.assertFalse(github_output.exists())
+            observed = root / "signing-key.sha256"
+            # Run 1 merges families before the private key is written.
+            if failed_run != 1:
+                self.assertEqual(
+                    observed.read_text(), hashlib.sha256(f"{secret}\n".encode()).hexdigest()
+                )
             else:
-                self.assertEqual(github_output.read_text().strip(), "snapshot_created=true")
+                self.assertFalse(observed.exists())
+            self.assertFalse((runner_temp / "repository-signing-key").exists())
+            self.assertNotIn(secret, completed.stdout + completed.stderr)
+            for path in runner_temp.rglob("*"):
+                if path.is_file():
+                    self.assertNotIn(secret.encode(), path.read_bytes())
+            output = github_output.read_text() if github_output.exists() else ""
+            if failed_run:
+                self.assertNotIn("snapshot_created=true", output)
+            else:
+                self.assertEqual(output.strip(), "snapshot_created=true")
 
 
 if __name__ == "__main__":

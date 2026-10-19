@@ -61,16 +61,12 @@ if [ "$EVENT" = push ]; then
 else
   origins=$({
     changed_origins "$changed"
-    while IFS= read -r path; do
-      case "$path" in
-        (scripts/test-package.sh) printf '%s\n' gnupg ;;
-        (scripts/test-cloudflared.sh) printf '%s\n' cloudflared ;;
-        (scripts/test-orbien.sh) printf '%s\n' orbien ;;
-        (scripts/test-ports-box-service.sh) printf '%s\n' ports-box ;;
-        (scripts/test-realm-service.sh) printf '%s\n' realm ;;
-        (scripts/test-tirith.sh) printf '%s\n' tirith ;;
-      esac
-    done < "$changed"
+    for origin in $(all_origins); do
+      smoke=$(smoke_script "$origin")
+      if [ -n "$smoke" ] && grep -Fx "$smoke" "$changed" >/dev/null; then
+        printf '%s\n' "$origin"
+      fi
+    done
   } | sort -u)
 fi
 

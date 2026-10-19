@@ -9,6 +9,18 @@ SMOKE_TESTS = sorted((ROOT / "scripts").glob("test-*.sh"))
 
 
 class SmokeScriptTest(unittest.TestCase):
+    def test_every_smoke_script_is_registered_for_a_package_origin(self):
+        completed = subprocess.run(
+            ["sh", "-eu", "-c",
+             '. scripts/lib.sh; for origin in $(all_origins); do smoke_script "$origin"; done'],
+            cwd=ROOT, capture_output=True, text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(
+            {str(path.relative_to(ROOT)) for path in SMOKE_TESTS},
+            set(completed.stdout.splitlines()),
+        )
+
     def test_every_smoke_script_is_an_executable_posix_shell_script(self):
         self.assertTrue(SMOKE_TESTS)
         for path in SMOKE_TESTS:
