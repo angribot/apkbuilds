@@ -39,7 +39,7 @@ def job_needs(block):
     if value is None:
         return set()
     if value.startswith("["):
-        return set(value.strip("[]").split(", "))
+        return {name.strip() for name in value.strip("[]").split(",")}
     return {value}
 
 
@@ -131,6 +131,31 @@ class PublicationJobGraphTest(unittest.TestCase):
                         },
                     )
                     self.assertEqual(completed.returncode, expected, completed.stderr)
+
+    def test_required_ci_gate_checks_build_and_publication_results(self):
+        script = textwrap.dedent(self.jobs["ci"].split("        run: |\n", 1)[1])
+        env = {
+            **os.environ, "CHECK": "success", "HAS_ORIGINS": "true",
+            "BUILD": "success", "SIGN": "success", "VERIFY": "success",
+            "SNAPSHOT_CREATED": "true", "RUN_INTEGRATION": "false", "INTEGRATION": "skipped",
+        }
+        for event in ("pull_request", "push"):
+            for job in ("CHECK", "BUILD", "SIGN", "VERIFY"):
+                for result in ("success", "failure", "cancelled", "skipped"):
+                    with self.subTest(event=event, job=job, result=result):
+                        completed = subprocess.run(
+                            ["sh", "-c", script], capture_output=True, text=True,
+                            env={**env, "EVENT": event, job: result},
+                        )
+                        required = event == "push" or job in ("CHECK", "BUILD")
+                        expected = int(required and result != "success")
+                        self.assertEqual(completed.returncode, expected, completed.stderr)
+
+        completed = subprocess.run(
+            ["sh", "-c", script], capture_output=True, text=True,
+            env={**env, "EVENT": "push", "VERIFY": "skipped", "SNAPSHOT_CREATED": "false"},
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_publication_completion_rejects_an_unpublished_snapshot(self):
         completion = self.jobs["publication"]

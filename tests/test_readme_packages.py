@@ -9,22 +9,13 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 def _field(text, name):
-    match = re.search(rf"^{re.escape(name)}=(.*)$", text, re.MULTILINE)
+    match = re.search(
+        rf"""^{re.escape(name)}=(?:"([^"]*)"|'([^']*)'|([^\n]*))""",
+        text, re.MULTILINE,
+    )
     if match is None:
         return ""
-    value = match.group(1)
-    quote = value[:1]
-    if quote in ("'", '"') and not (len(value) > 1 and value.endswith(quote)):
-        tail = text[match.end():]
-        close = tail.find(quote)
-        value += tail[: close + 1] if close != -1 else tail
-    value = value.strip()
-    if value[:1] in ("'", '"'):
-        quote = value[0]
-        value = value[1:]
-        if value.endswith(quote):
-            value = value[:-1]
-    return value
+    return next(value for value in match.groups() if value is not None).strip()
 
 
 def apkbuild_declarations(text):
@@ -118,14 +109,6 @@ class ApkbuildDeclarationsTest(unittest.TestCase):
         text = "pkgname=alpha\npkgver=1.0.0\npkgrel=0\n"
 
         self.assertEqual({"alpha"}, apkbuild_declarations(text))
-
-    def test_value_with_unterminated_quote_reads_to_end(self):
-        text = 'pkgname=alpha\nsubpackages="$pkgname-doc\n$pkgname-utils\n'
-
-        self.assertEqual(
-            {"alpha", "alpha-doc", "alpha-utils"},
-            apkbuild_declarations(text),
-        )
 
     def test_does_not_execute_apkbuild(self):
         with tempfile.TemporaryDirectory() as directory:

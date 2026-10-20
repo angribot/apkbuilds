@@ -1,7 +1,13 @@
+import hashlib
 import importlib.util
+import io
+import json
 import sys
+import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 SCRIPTS = Path(__file__).parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -39,22 +45,71 @@ class UpdateRealmTest(unittest.TestCase):
         self.assertEqual(version, "2.10.0")
         self.assertEqual(set(selected), {"x86_64", "aarch64"})
 
-    def test_update_resets_revision_and_replaces_each_architecture_checksum(self):
-        text = (
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.apkbuild = Path(directory.name) / "APKBUILD"
+        self.original = (
             "pkgver=2.9.4\npkgrel=2\n"
             'x86_64)\n\t_sha512="' + "a" * 128 + '"\n'
             'aarch64)\n\t_sha512="' + "b" * 128 + '"\n'
         )
+        self.apkbuild.write_text(self.original)
+        self.assets = [
+            {
+                "name": f"realm-{arch}-unknown-linux-musl.tar.gz",
+                "browser_download_url": (
+                    "https://github.com/zhboner/realm/releases/download/v2.10.0/"
+                    f"realm-{arch}-unknown-linux-musl.tar.gz"
+                ),
+                "digest": "sha256:" + hashlib.sha256(arch.encode()).hexdigest(),
+            }
+            for arch in ("x86_64", "aarch64")
+        ]
 
-        result = update.updated_apkbuild(
-            text,
-            "2.10.0",
-            {"x86_64": "c" * 128, "aarch64": "d" * 128},
+    def run_update(self, argv=()):
+        responses = {
+            "https://api.github.com/repos/zhboner/realm/releases?per_page=100":
+                json.dumps([{"tag_name": "v2.10.0", "assets": self.assets}]).encode(),
+            **{
+                asset["browser_download_url"]: arch.encode()
+                for arch, asset in zip(("x86_64", "aarch64"), self.assets)
+            },
+        }
+        with mock.patch.object(update, "APKBUILD", self.apkbuild), \
+                mock.patch.object(update, "download", side_effect=responses.__getitem__), \
+                mock.patch.object(sys, "argv", ["update-realm.py", *argv]), \
+                redirect_stdout(io.StringIO()):
+            update.main()
+
+    def test_main_updates_both_architecture_checksums_after_authentication(self):
+        self.run_update()
+        self.assertEqual(
+            self.apkbuild.read_text(),
+            "pkgver=2.10.0\npkgrel=0\n"
+            'x86_64)\n\t_sha512="' + hashlib.sha512(b"x86_64").hexdigest() + '"\n'
+            'aarch64)\n\t_sha512="' + hashlib.sha512(b"aarch64").hexdigest() + '"\n',
         )
 
-        self.assertIn("pkgver=2.10.0\npkgrel=0", result)
-        self.assertIn('x86_64)\n\t_sha512="' + "c" * 128 + '"', result)
-        self.assertIn('aarch64)\n\t_sha512="' + "d" * 128 + '"', result)
+    def test_update_and_check_reject_unauthenticated_assets_without_partial_writes(self):
+        failures = (
+            ("browser_download_url", "https://example.invalid/asset", "unexpected .* asset URL"),
+            ("digest", None, "GitHub asset digest"),
+            ("digest", "sha256:" + "0" * 64, "GitHub asset digest"),
+        )
+        for asset in self.assets:
+            for field, value, message in failures:
+                for argv in ([], ["--check"]):
+                    with self.subTest(asset=asset["name"], field=field, value=value, argv=argv), \
+                            mock.patch.dict(asset, {field: value}):
+                        with self.assertRaisesRegex(ValueError, message):
+                            self.run_update(argv)
+                        self.assertEqual(self.apkbuild.read_text(), self.original)
+
+    def test_check_authenticates_both_assets_without_writing(self):
+        with self.assertRaisesRegex(SystemExit, "update available: 2.10.0"):
+            self.run_update(["--check"])
+        self.assertEqual(self.apkbuild.read_text(), self.original)
 
 
 if __name__ == "__main__":

@@ -77,6 +77,10 @@ class UpdateTirithTest(unittest.TestCase):
         def download(url):
             if url == f"{update.RELEASES}&page=1":
                 return json.dumps([release("v0.3.4")]).encode()
+            self.assertEqual(
+                url,
+                "https://github.com/sheeki03/tirith/archive/refs/tags/v0.3.4.tar.gz",
+            )
             return data
 
         with mock.patch.object(update, "download", side_effect=download), mock.patch.object(

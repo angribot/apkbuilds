@@ -51,3 +51,7 @@ Run the unit tests with `python3 -m unittest discover -s tests`. Shared CI
 operation changes also run the [repository lifecycle integration test](tests/integration/README.md)
 on native x86_64 and aarch64 runners, using temporary signing keys and a local
 Git remote.
+
+Pull requests select package origins affected by packaging-input or smoke-script
+changes. Complete published package families are installed and smoke-tested
+without rebuilding or emitting candidate APKs.

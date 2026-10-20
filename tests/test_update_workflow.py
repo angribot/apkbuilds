@@ -19,27 +19,27 @@ CI_WORKFLOW = CI_WORKFLOW_PATH.read_text()
 UPDATER_PATH = ROOT / "scripts" / "update-packages.sh"
 
 
-def child_keys(document, parent):
-    """Read the immediate mapping keys under a simple workflow section."""
+def child_values(document, parent):
+    """Read immediate keys and inline values under a workflow section."""
     lines = document.splitlines()
     parent_line = next(
         index for index, line in enumerate(lines) if line == f"{parent}:"
     )
-    keys = []
+    values = {}
     for line in lines[parent_line + 1 :]:
         if line and not line.startswith(" "):
             break
-        match = re.fullmatch(r"  ([A-Za-z0-9_-]+):(?: .*)?", line)
+        match = re.fullmatch(r"  ([A-Za-z0-9_-]+):\s*(.*)", line)
         if match:
-            keys.append(match.group(1))
-    return keys
+            values[match.group(1)] = match.group(2)
+    return values
 
 
 class PackageUpdateTest(unittest.TestCase):
     def test_workflow_triggers_and_permissions_are_narrow(self):
-        self.assertEqual(child_keys(WORKFLOW, "on"), ["schedule"])
-        self.assertEqual(child_keys(WORKFLOW, "permissions"), ["contents"])
-        self.assertEqual(child_keys(CI_WORKFLOW, "on"), ["push", "pull_request"])
+        self.assertEqual(set(child_values(WORKFLOW, "on")), {"schedule"})
+        self.assertEqual(child_values(WORKFLOW, "permissions"), {"contents": "read"})
+        self.assertEqual(set(child_values(CI_WORKFLOW, "on")), {"push", "pull_request"})
 
     def test_manifest_registers_every_origin_updater(self):
         entries = read_manifest()

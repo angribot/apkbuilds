@@ -59,7 +59,15 @@ done
 if [ "$EVENT" = push ]; then
   origins=$(all_origins)
 else
-  origins=$(changed_origins "$changed")
+  origins=$({
+    changed_origins "$changed"
+    for origin in $(all_origins); do
+      smoke=$(smoke_script "$origin")
+      if [ -n "$smoke" ] && grep -Fx "$smoke" "$changed" >/dev/null; then
+        printf '%s\n' "$origin"
+      fi
+    done
+  } | sort -u)
 fi
 
 for origin in $origins; do

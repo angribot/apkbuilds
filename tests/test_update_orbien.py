@@ -65,6 +65,10 @@ class UpdateOrbienTest(unittest.TestCase):
         def download(url):
             if url == update.RELEASES:
                 return json.dumps([release("v3.2.0")]).encode()
+            self.assertEqual(
+                url,
+                "https://github.com/orbien-org/orbien/archive/refs/tags/v3.2.0.tar.gz",
+            )
             return source
 
         with mock.patch.object(update, "download", side_effect=download), mock.patch.object(
