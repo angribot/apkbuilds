@@ -1,6 +1,6 @@
 pkgname=cloudflared
 pkgver=2026.10.3
-pkgrel=0
+pkgrel=1
 pkgdesc="Cloudflare Tunnel client"
 url="https://github.com/cloudflare/cloudflared"
 arch="x86_64 aarch64"
@@ -16,6 +16,9 @@ source="$pkgname-$pkgver.tar.gz::https://github.com/cloudflare/cloudflared/archi
 	$pkgname.initd
 	"
 options="!check net" # upstream tests require privileged ICMP sockets
+
+# Alpine's packaged Go lags the toolchain required by this upstream release.
+export GOTOOLCHAIN=go1.27.3
 
 prepare() {
 	default_prepare

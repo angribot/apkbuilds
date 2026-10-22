@@ -2,6 +2,7 @@
 
 import pathlib
 import subprocess
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -11,6 +12,36 @@ SERVICE = PACKAGE / "cloudflared.initd"
 
 
 class CloudflaredPackageTest(unittest.TestCase):
+    def test_go_phases_override_alpine_local_toolchain(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = pathlib.Path(directory)
+            go = work / "go"
+            go.write_text('#!/bin/sh\nprintf "%s\\n" "${GOTOOLCHAIN-unset}"\n')
+            go.chmod(0o755)
+            (work / "cloudflared_man_template").touch()
+            for phase in ("prepare", "build", "check"):
+                with self.subTest(phase=phase):
+                    result = subprocess.run(
+                        [
+                            "sh", "-eu", "-c",
+                            '''
+                            export GOTOOLCHAIN=local SOURCE_DATE_EPOCH=0 GOFLAGS=
+                            PATH="$3:$PATH"
+                            export PATH
+                            default_prepare() { :; }
+                            date() { printf '%s\\n' unused; }
+                            make() { go version; }
+                            envsubst() { :; }
+                            . "$1"
+                            "$2"
+                            ''',
+                            "sh", str(PACKAGE / "APKBUILD"), phase, directory,
+                        ],
+                        cwd=work, text=True, capture_output=True, check=False,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.strip(), "go1.27.3")
+
     def test_shipped_configuration_is_non_live(self):
         active_lines = [
             line.strip()
