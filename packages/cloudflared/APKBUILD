@@ -1,5 +1,5 @@
 pkgname=cloudflared
-pkgver=2026.10.4
+pkgver=2026.10.5
 pkgrel=0
 pkgdesc="Cloudflare Tunnel client"
 url="https://github.com/cloudflare/cloudflared"
@@ -47,7 +47,7 @@ package() {
 }
 
 sha512sums="
-ef220279d6aea6bf0fe7700255d13ec8251d6f8c5f884f20bdf6192921fc0ff3c415dc1661746ab25c1feaf1f6afb0acc0759618872e0496b2d5b694fc4b3c75  cloudflared-2026.10.4.tar.gz
+f05464ea3255cf0ab4a3555638a773eaa5f150bef505a09e44b3faf84785e9db115396c559c6128b3194494d1bfd1b632b0647be51e6ff49da04e000ae847cc5  cloudflared-2026.10.5.tar.gz
 7dab700d8bf85cc3a8ebffe4e143d7811d861e15dd3540d957d2fb1299ad212fc5707516338bd302a0c9389a1f3a6649831f3a59569a7d70c324b2389bfc2c06  goflags.patch
 ba4038ee0c59e3c4293df8df718516e1695e7700b54e3a7ea15edbd1a7ab8c7a4665a5eeb68bc5287a3fbb398b672138d3b4b984c4970dec4b664eab6ea28e97  config.yml
 9ac541c70bba0bdaf136a7a7d8e1d6b8486488a66075ea7fcd7b6718aafe7decd27ad56a3eb8ddcb6e95975f09704de7e148572e3042a6c3a9138c214312a2fb  cloudflared.initd
