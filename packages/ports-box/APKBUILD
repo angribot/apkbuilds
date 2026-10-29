@@ -1,5 +1,5 @@
 pkgname=ports-box
-pkgver=0.5.0
+pkgver=0.6.0
 pkgrel=0
 pkgdesc="Linux TCP/UDP port forwarder with per-user traffic quotas"
 url="https://github.com/Yuu518/ports-box"
@@ -42,6 +42,6 @@ package() {
 }
 
 sha512sums="
-2b125e1ceecb17dc7c5b5fa67a119fc87ae054565de33d66782d4b18ae18b59f483392a99242f690310ba2ad3359bb52bb262a47bd3d474f313e0389ec73e785  ports-box-0.5.0.tar.gz
+98b1af5580f116dab38ca91290d43db7346e156095ebd47d9a2edaa50869804777a2b27fd4583786766c2b640a55357c7f144881a310978102427177167b3385  ports-box-0.6.0.tar.gz
 5cd1421a51c641106c4c7362a7f3fdf5d45f8556811b29085b35af2ef561ba5f44fae8074f9533927d78cc4f19bb5d684f47dc5486775826947d3081a34be665  ports-box.initd
 "
