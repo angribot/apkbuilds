@@ -1,5 +1,5 @@
 pkgname=tirith
-pkgver=0.4.2
+pkgver=0.5.0
 pkgrel=0
 pkgdesc="Terminal security for developers and AI agents"
 url="https://github.com/sheeki03/tirith"
@@ -69,7 +69,7 @@ package() {
 }
 
 sha512sums="
-017e26314a4ede12e8d6f3335d3a5b7d8f457827516c6cd3c3e078ea820175ce1a8c644dd975d84bc4ef39da12525e79382592d67f1fae8060909580c38fa6a2  tirith-0.4.2.tar.gz
+ab5365b851f991c3a0feff509431b1d21115a4311cc9a4a3a6137e930b9d9adffedbb68171afcf5652c93d2622bd033347f73ab7645352e23f5c064babdee871  tirith-0.5.0.tar.gz
 5cc2af2fda566751f46e2812b46d4acdf28300a4ec2555fb9df0431cede12a6c8cf2ac749b0ed27e378755ffde79c3de9ab491753d58efbc6ae4ffd7ec403382  0001-add-apk-install-method.patch
 043294b34656bf4cc3da347dc4973e4494ebccaddbeae2a538ad7de08ac047476376893fc940afeb6844cdb4b3765b53b4552c49b3825c81f4a7629922d127a0  0002-fix-musl-ioctl-request-types.patch
 "
