@@ -32,7 +32,10 @@ build() {
 check() {
 	# The full upstream suite includes DNS-dependent tests; run its deterministic
 	# provenance, bypass-regression, safe-command, and shell-hook coverage.
-	cargo test --frozen --package tirith-core --lib selfupdate::tests
+	# Alpine's rustc targets *-alpine-linux-musl, which upstream deliberately
+	# does not map to its published *-unknown-linux-musl release archives.
+	cargo test --frozen --package tirith-core --lib selfupdate::tests -- \
+		--skip selfupdate::tests::release_target_matches_the_compilation_target_exactly
 	cargo test --frozen --package tirith-core \
 		--test bypass_regression \
 		--test safe_command_integration
