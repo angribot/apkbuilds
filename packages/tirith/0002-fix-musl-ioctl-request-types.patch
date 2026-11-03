@@ -1,6 +1,8 @@
 --- a/crates/tirith-core/src/capsule/linux.rs
 +++ b/crates/tirith-core/src/capsule/linux.rs
-@@ -870,6 +870,6 @@
+@@ -829,10 +829,10 @@
+ 
+ #[cfg(target_arch = "x86_64")]
  const SAFE_TERMINAL_IOCTL_REQUESTS: &[u64] = &[
 -    libc::TCGETS,
 -    libc::TIOCGWINSZ,
@@ -11,14 +13,52 @@
 +    libc::TIOCGPGRP as u64,
 +    libc::FIONREAD as u64,
  ];
-@@ -1442,8 +1442,8 @@
+ 
+ #[cfg(target_arch = "x86_64")]
+@@ -1159,7 +1159,7 @@
+                 .and_condition(SeccompArgumentFilter::new64(
+                     1,
+                     SeccompilerComparator::Eq,
+-                    libc::FIONBIO,
++                    libc::FIONBIO as u64,
+                 )),
+         );
+         // CPython's custom opener sets CLOEXEC with this exact ioctl. It
+@@ -1174,7 +1174,7 @@
+                 .and_condition(SeccompArgumentFilter::new64(
+                     1,
+                     SeccompilerComparator::Eq,
+-                    libc::FIOCLEX,
++                    libc::FIOCLEX as u64,
+                 ))
+                 .and_condition(SeccompArgumentFilter::new64(
+                     2,
+@@ -1590,8 +1590,8 @@
          let rules = SafeDescriptorControls.conditional_rules();
          let ioctl_rules = rules.get(&Sysno::ioctl).expect("conditional ioctl rules");
-         assert_eq!(ioctl_rules.len(), SAFE_TERMINAL_IOCTL_REQUESTS.len());
+         assert_eq!(ioctl_rules.len(), SAFE_TERMINAL_IOCTL_REQUESTS.len() + 2);
 -        assert!(!SAFE_TERMINAL_IOCTL_REQUESTS.contains(&{ libc::TIOCSTI }));
 -        assert!(!SAFE_TERMINAL_IOCTL_REQUESTS.contains(&{ libc::TIOCLINUX }));
 +        assert!(!SAFE_TERMINAL_IOCTL_REQUESTS.contains(&(libc::TIOCSTI as u64)));
 +        assert!(!SAFE_TERMINAL_IOCTL_REQUESTS.contains(&(libc::TIOCLINUX as u64)));
-         for rule in ioctl_rules {
+         for rule in &ioctl_rules[..SAFE_TERMINAL_IOCTL_REQUESTS.len()] {
              assert_eq!(rule.argument_filters.len(), 2);
              assert!(rule
+@@ -1616,7 +1616,7 @@
+         assert!(nonblocking
+             .argument_filters
+             .iter()
+-            .any(|f| f.arg_idx == 1 && f.value == libc::FIONBIO));
++            .any(|f| f.arg_idx == 1 && f.value == libc::FIONBIO as u64));
+ 
+         let close_on_exec = ioctl_rules.last().unwrap();
+         assert_eq!(close_on_exec.argument_filters.len(), 3);
+@@ -1627,7 +1627,7 @@
+         assert!(close_on_exec
+             .argument_filters
+             .iter()
+-            .any(|f| f.arg_idx == 1 && f.value == libc::FIOCLEX));
++            .any(|f| f.arg_idx == 1 && f.value == libc::FIOCLEX as u64));
+         assert!(close_on_exec
+             .argument_filters
+             .iter()

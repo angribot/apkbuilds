@@ -1,63 +1,150 @@
 --- a/crates/tirith-core/src/selfupdate.rs
 +++ b/crates/tirith-core/src/selfupdate.rs
-@@ -43,0 +44,2 @@
+@@ -41,6 +41,8 @@
+     Chocolatey,
+     /// Nix store binary; immutable and generally built from source.
+     Nix,
 +    /// Alpine Linux (`apk`).
 +    Apk,
-@@ -60,0 +63 @@
+     /// mise-managed install (GitHub release or Cargo backend).
+     Mise,
+     /// asdf-managed install.
+@@ -66,6 +68,7 @@
+             InstallMethod::Scoop => "scoop",
+             InstallMethod::Chocolatey => "chocolatey",
+             InstallMethod::Nix => "nix",
 +            InstallMethod::Apk => "apk",
-@@ -88,0 +92 @@
+             InstallMethod::Mise => "mise",
+             InstallMethod::Asdf => "asdf",
+             InstallMethod::Aur => "aur",
+@@ -92,6 +95,7 @@
+             InstallMethod::Scoop => Some("scoop update tirith"),
+             InstallMethod::Chocolatey => Some("choco upgrade tirith"),
+             InstallMethod::Nix => Some("update the tirith entry in its owning Nix profile, flake, or Home Manager configuration"),
 +            InstallMethod::Apk => Some("apk upgrade tirith"),
-@@ -168,2 +172,2 @@
+             InstallMethod::Mise => Some("mise upgrade tirith --no-prune"),
+             InstallMethod::Asdf => Some("asdf install tirith latest, then select that version with `asdf set` in the intended project or user scope"),
+             InstallMethod::Aur => {
+@@ -208,8 +212,8 @@
+     InstallMethod::Unknown
+ }
+ 
 -/// Refine a system-path [`InstallMethod::Unknown`] into `Apt`, `Dnf`, or `Aur` from an
 -/// `/etc/os-release` `ID`/`ID_LIKE` token list (passed in so it's testable
 +/// Refine a system-path [`InstallMethod::Unknown`] into `Apt`, `Apk`, `Dnf`, or `Aur`
 +/// from an `/etc/os-release` `ID`/`ID_LIKE` token list (passed in so it's testable
-@@ -179,0 +184,3 @@
+ /// without reading `/etc`). Non-`Unknown` methods and unrecognized OS families
+ /// are returned unchanged.
+ pub fn refine_system_pm(method: InstallMethod, os_release_ids: &[String]) -> InstallMethod {
+@@ -220,6 +224,9 @@
+     if is("debian") || is("ubuntu") || is("linuxmint") || is("pop") || is("raspbian") {
+         return InstallMethod::Apt;
+     }
 +    if is("alpine") {
 +        return InstallMethod::Apk;
 +    }
-@@ -509,0 +517 @@
+     if is("fedora")
+         || is("rhel")
+         || is("centos")
+@@ -579,6 +586,7 @@
+             InstallMethod::Scoop,
+             InstallMethod::Chocolatey,
+             InstallMethod::Nix,
 +            InstallMethod::Apk,
-@@ -540,0 +549,4 @@
+             InstallMethod::Mise,
+             InstallMethod::Asdf,
+             InstallMethod::Aur,
+@@ -613,6 +621,10 @@
+             .unwrap()
+             .contains("scoop"));
+         assert!(InstallMethod::Aur.upgrade_command().is_some());
 +        assert_eq!(
 +            InstallMethod::Apk.upgrade_command(),
 +            Some("apk upgrade tirith")
 +        );
-@@ -553,0 +566,7 @@
-+    }
-+
-+    #[test]
+         assert!(InstallMethod::Apt.upgrade_command().is_some());
+         assert!(InstallMethod::Dnf.upgrade_command().is_some());
+         for method in [
+@@ -645,6 +657,13 @@
+     }
+ 
+     #[test]
 +    fn refine_system_pm_alpine_family() {
 +        let m = refine_system_pm(InstallMethod::Unknown, &["alpine".to_string()]);
 +        assert_eq!(m, InstallMethod::Apk);
 +        assert!(!m.is_self_replaceable());
++    }
++
++    #[test]
+     fn refine_system_pm_arch_family_is_aur() {
+         // Arch ID, and a derivative that only sets ID_LIKE=arch, both refine to
+         // AUR (tirith is not in the official Arch repos, so a /usr/bin install on
 --- a/crates/tirith/src/cli/selfupdate.rs
 +++ b/crates/tirith/src/cli/selfupdate.rs
-@@ -537,2 +537,2 @@
+@@ -628,8 +628,8 @@
+     0
+ }
+ 
 -/// Read lowercased `ID`/`ID_LIKE` tokens from `/etc/os-release` for apt-vs-dnf
 -/// disambiguation. Empty vec on non-Linux or absent/unreadable file (caller then
 +/// Read lowercased `ID`/`ID_LIKE` tokens from `/etc/os-release` for system package
 +/// manager detection. Empty vec on non-Linux or absent/unreadable file (caller then
-@@ -671 +671 @@
+ /// leaves the method `Unknown`).
+ fn read_os_release_ids() -> Vec<String> {
+     if !cfg!(target_os = "linux") {
+@@ -762,7 +762,7 @@
+ /// For installs whose binary is legitimately NOT byte-identical to the generic
+ /// release artifact, the canonical-binary byte-compare in `verify-self` cannot
+ /// apply, so return an honest `Unverified` reason instead of a false `Failed`:
 -/// `cargo install` and the AUR compile from source. Returns `None` for installs
 +/// `cargo install`, the AUR, and Alpine APKs compile from source. Returns `None` for installs
-@@ -688,0 +689,5 @@
+ /// that DO ship the canonical release binary (`.deb`/apt, `.rpm`/dnf,
+ /// self-managed, Hermes, Homebrew, npm, Scoop) and must verify normally. Exhaustive (no
+ /// `_`) so a new install method forces a deliberate decision here. The release
+@@ -778,6 +778,11 @@
+         InstallMethod::Aur => Some(
+             "installed from the AUR (compiled from source by your AUR helper) — there is no \
+              canonical release binary to byte-compare against"
++                .to_string(),
++        ),
 +        InstallMethod::Apk => Some(
 +            "installed from an Alpine APK (compiled from source) — there is no canonical \
 +             release binary to byte-compare against"
-+                .to_string(),
-+        ),
-@@ -723,0 +729 @@
+                 .to_string(),
+         ),
+         InstallMethod::Nix => Some(
+@@ -864,6 +869,7 @@
+         | InstallMethod::Apt
+         | InstallMethod::Cargo
+         | InstallMethod::Aur
 +        | InstallMethod::Apk
-@@ -745 +751 @@
+         | InstallMethod::Dnf
+         | InstallMethod::Unknown => None,
+     }
+@@ -885,7 +891,7 @@
+     }
+ 
+     // 1b. Source-built installs are not byte-identical to the generic release
 -    //     binary by design (cargo/AUR compile from source). Byte-comparing them
 +    //     binary by design (cargo/AUR/APK compile from source). Byte-comparing them
-@@ -3901 +3907,2 @@
--    fn source_built_carveout_is_cargo_and_aur_only() {
-+    fn source_built_carveout_includes_apk() {
+     //     to the generic tarball would falsely report "modified or replaced",
+     //     so report an honest Unverified rather than a false Failed. Both
+     //     `.deb`/apt and `.rpm`/dnf ship the canonical binary and therefore are
+@@ -4549,6 +4555,7 @@
+         assert!(source_built_unverified_reason(&InstallMethod::Cargo).is_some());
+         assert!(source_built_unverified_reason(&InstallMethod::Aur).is_some());
+         assert!(source_built_unverified_reason(&InstallMethod::Nix).is_some());
 +        assert!(source_built_unverified_reason(&InstallMethod::Apk).is_some());
-@@ -3945,23 +3952,25 @@
+         // These ship the canonical binary and MUST verify normally (no carve-out).
+         for m in [
+             InstallMethod::Apt,
+@@ -4664,30 +4671,32 @@
+     }
+ 
+     #[test]
 -    fn verify_self_carves_out_cargo_before_any_network() {
++    fn verify_self_carves_out_source_built_installs_before_any_network() {
+         let _shared_state = tirith_test_support::SharedStateGuard::acquire();
 -        // A cargo (source-built) install must short-circuit to Unverified BEFORE
 -        // the release download, so this runs with no network and is a benign
 -        // "cannot verify" (exit 0), not an operational error or a Failed.
@@ -80,7 +167,6 @@
 -            !outcome.operational_error,
 -            "source-built Unverified is benign and must not exit non-zero"
 -        );
-+    fn verify_self_carves_out_source_built_installs_before_any_network() {
 +        // Source-built installs must short-circuit to Unverified BEFORE the release
 +        // download, so this runs with no network and is a benign "cannot verify"
 +        // (exit 0), not an operational error or a Failed.
@@ -105,10 +191,25 @@
 +                "source-built Unverified is benign and must not exit non-zero"
 +            );
 +        }
-@@ -3983,0 +3993 @@
+     }
+ 
+     #[test]
+@@ -4707,6 +4716,7 @@
+             InstallMethod::Apt,
+             InstallMethod::Cargo,
+             InstallMethod::Aur,
 +            InstallMethod::Apk,
+             InstallMethod::Dnf,
+             InstallMethod::Unknown,
+         ] {
 --- a/crates/tirith/src/main.rs
 +++ b/crates/tirith/src/main.rs
-@@ -1605 +1605 @@
+@@ -1812,7 +1812,7 @@
+     #[command(after_help = "\
+ Updates tirith to the latest release. tirith detects how it was installed:
+ 
 -  * Package-manager installs (Homebrew, cargo, npm, Scoop, AUR, apt/dnf) are
 +  * Package-manager installs (Homebrew, cargo, npm, Scoop, AUR, apt/dnf/apk) are
+     NEVER self-modified — tirith prints the exact command to run instead.
+   * A self-replaceable install (the install.sh tarball, a standalone binary, or
+     a securely owned Hermes-cached release) is updated in place: tirith
