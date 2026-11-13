@@ -40,7 +40,7 @@ class CloudflaredPackageTest(unittest.TestCase):
                         cwd=work, text=True, capture_output=True, check=False,
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual(result.stdout.strip(), "go1.27.3")
+                    self.assertEqual(result.stdout.strip(), "auto")
 
     def test_shipped_configuration_is_non_live(self):
         active_lines = [
