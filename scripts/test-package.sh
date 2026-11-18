@@ -8,7 +8,19 @@ if printf '%s\n' "$version_output" | grep -Eqi 'development|beta|release candida
   exit 1
 fi
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+cleanup() {
+  # gpg autostarts gpg-agent and scdaemon with sockets in the homedir. They
+  # unlink those sockets while exiting, which races rm -rf, and gpgconf --kill
+  # returns before they exit, so wait for the sockets to go first.
+  gpgconf --homedir "$work" --kill all >/dev/null 2>&1 || :
+  tries=50
+  while [ "$tries" -gt 0 ] && ls "$work"/S.* >/dev/null 2>&1; do
+    sleep 0.1
+    tries=$((tries - 1))
+  done
+  rm -rf "$work"
+}
+trap cleanup EXIT
 gpg --batch --homedir "$work" --passphrase '' --quick-generate-key ci@example.invalid default default 1d
 printf 'apkbuilds\n' > "$work/message"
 gpg --batch --homedir "$work" --detach-sign "$work/message"
