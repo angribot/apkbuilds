@@ -11,10 +11,14 @@ work=$(mktemp -d)
 cleanup() {
   # gpg autostarts gpg-agent and scdaemon with sockets in the homedir. They
   # unlink those sockets while exiting, which races rm -rf, and gpgconf --kill
-  # returns before they exit, so wait for the sockets to go first.
-  gpgconf --homedir "$work" --kill all >/dev/null 2>&1 || :
+  # returns before they exit, so wait up to five seconds for the sockets to go.
+  gpgconf --homedir "$work" --kill all || true
   tries=50
-  while [ "$tries" -gt 0 ] && ls "$work"/S.* >/dev/null 2>&1; do
+  while ls "$work"/S.* >/dev/null 2>&1; do
+    if [ "$tries" -eq 0 ]; then
+      echo 'GnuPG daemon sockets remain after five seconds' >&2
+      break
+    fi
     sleep 0.1
     tries=$((tries - 1))
   done

@@ -2,8 +2,8 @@
 
 import os
 import pathlib
+import shutil
 import signal
-import stat
 import subprocess
 import tempfile
 import textwrap
@@ -11,11 +11,6 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SMOKE_TESTS = sorted((ROOT / "scripts").glob("test-*.sh"))
-
-
-def write_executable(path, body):
-    path.write_text(textwrap.dedent(body).lstrip())
-    path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
 class SmokeScriptTest(unittest.TestCase):
@@ -47,6 +42,8 @@ class GnupgSmokeCleanupTest(unittest.TestCase):
 
     When that unlink races the smoke test's `rm -rf` of the homedir, BusyBox
     `rm` reports the vanished socket and fails an otherwise passing smoke test.
+    A fake agent checks the ordering that prevents the race: the homedir is
+    removed only after the agent has released its socket.
     """
 
     def setUp(self):
@@ -55,56 +52,61 @@ class GnupgSmokeCleanupTest(unittest.TestCase):
         self.root = pathlib.Path(directory.name)
         self.agent_pid = self.root / "agent.pid"
         self.agent_log = self.root / "agent.log"
-        self.addCleanup(self.kill_agent)
+        self.homedir_record = self.root / "homedir"
+        self.addCleanup(self.stop_fake_gnupg)
 
-    def kill_agent(self):
+    def stop_fake_gnupg(self):
         if self.agent_pid.exists():
             try:
                 os.kill(int(self.agent_pid.read_text()), signal.SIGKILL)
             except ProcessLookupError:
                 pass
+        if self.homedir_record.exists():
+            shutil.rmtree(self.homedir_record.read_text().strip(),
+                          ignore_errors=True)
 
     def test_homedir_is_removed_only_after_the_agent_releases_its_socket(self):
         fake_bin = self.root / "bin"
         fake_bin.mkdir()
-        tmp = self.root / "tmp"
-        tmp.mkdir()
-        # Like gpg-agent, the fake agent exits asynchronously when stopped and
-        # unlinks its socket on the way out.
-        write_executable(
-            fake_bin / "gpg",
-            r'''
-            #!/bin/sh
-            set -eu
-            if [ "$1" = --version ]; then
-              echo 'gpg (GnuPG) 9.9.9'
-              exit 0
-            fi
-            while [ "$1" != --homedir ]; do shift; done
-            socket=$2/S.gpg-agent
-            [ ! -e "$socket" ] || exit 0
-            : > "$socket"
-            sh -c '
-              trap "sleep 0.3; rm \"\$1\" && echo removed; exit" TERM
-              while :; do sleep 0.05; done
-            ' fake-agent "$socket" </dev/null >>"$FAKE_AGENT_LOG" 2>&1 &
-            echo "$!" > "$FAKE_AGENT_PID"
+        fakes = {
+            # Like gpg-agent, the fake agent exits asynchronously when stopped
+            # and unlinks its socket on the way out. It logs before unlinking,
+            # so the log is complete once the socket is gone; an rm error
+            # appended after the marker means someone else removed the socket.
+            "gpg": r'''
+                #!/bin/sh
+                set -eu
+                if [ "$1" = --version ]; then
+                  echo 'gpg (GnuPG) 9.9.9'
+                  exit 0
+                fi
+                while [ "$1" != --homedir ]; do shift; done
+                socket=$2/S.gpg-agent
+                [ ! -e "$socket" ] || exit 0
+                printf '%s\n' "$2" > "$FAKE_GPG_HOMEDIR"
+                : > "$socket"
+                sh -c '
+                  trap "sleep 0.3; echo unlinking; rm \"\$1\"; exit" TERM
+                  while :; do sleep 0.05; done
+                ' fake-agent "$socket" </dev/null >>"$FAKE_AGENT_LOG" 2>&1 &
+                echo "$!" > "$FAKE_AGENT_PID"
             ''',
-        )
-        # Like `gpgconf --kill`, return before the daemons have exited.
-        write_executable(
-            fake_bin / "gpgconf",
-            r'''
-            #!/bin/sh
-            [ ! -f "$FAKE_AGENT_PID" ] || kill "$(cat "$FAKE_AGENT_PID")"
+            # Like `gpgconf --kill`, return before the daemons have exited.
+            "gpgconf": r'''
+                #!/bin/sh
+                [ ! -f "$FAKE_AGENT_PID" ] || kill "$(cat "$FAKE_AGENT_PID")"
             ''',
-        )
+        }
+        for name, body in fakes.items():
+            fake = fake_bin / name
+            fake.write_text(textwrap.dedent(body).lstrip())
+            fake.chmod(0o755)
         env = {
             **os.environ,
             "FAKE_AGENT_LOG": str(self.agent_log),
             "FAKE_AGENT_PID": str(self.agent_pid),
+            "FAKE_GPG_HOMEDIR": str(self.homedir_record),
             "PATH": os.pathsep.join([str(fake_bin), os.environ["PATH"]]),
-            "TMPDIR": str(tmp),
         }
 
         completed = subprocess.run(
@@ -113,8 +115,9 @@ class GnupgSmokeCleanupTest(unittest.TestCase):
         )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(list(tmp.iterdir()), [])
-        self.assertEqual(self.agent_log.read_text(), "removed\n")
+        homedir = pathlib.Path(self.homedir_record.read_text().strip())
+        self.assertFalse(homedir.exists())
+        self.assertEqual(self.agent_log.read_text(), "unlinking\n")
 
 
 if __name__ == "__main__":
